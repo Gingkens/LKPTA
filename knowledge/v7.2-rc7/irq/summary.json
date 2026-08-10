@@ -1,0 +1,71 @@
+{
+  "module": "irq",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "kernel_name": "irq_affinity_proc_ops",
+      "category": "tunable",
+      "summary": "per-irq 中断亲和性 CPU 掩码（位图格式），写则请求把该中断绑到指定 CPU 集合，至少需命中一个 online CPU。"
+    },
+    {
+      "kernel_name": "irq_affinity_hint_proc_show",
+      "category": "readonly",
+      "summary": "per-irq 内核给用户态的亲和性建议掩码（驱动/子系统经 irq_apply_affinity_hint 写入），用户态可参考但非约束。"
+    },
+    {
+      "kernel_name": "irq_affinity_list_proc_ops",
+      "category": "tunable",
+      "summary": "per-irq 中断亲和性 CPU 列表（逗号分隔的 CPU 号/range 格式），与 smp_affinity 同物异格式，写即请求改绑核。"
+    },
+    {
+      "kernel_name": "irq_node_proc_show",
+      "category": "readonly",
+      "summary": "per-irq 中断描述符所在 NUMA 节点号（irq_desc 申请时所在 node），配合 smp_affinity 判断中断局部性。"
+    },
+    {
+      "kernel_name": "irq_effective_aff_proc_show",
+      "category": "readonly",
+      "summary": "per-irq 实际生效的 CPU 掩码（位图格式），即中断当前真正投递的 CPU，可能比 smp_affinity 窄（受芯片/在线 CPU/managed 限制）。"
+    },
+    {
+      "kernel_name": "irq_effective_aff_list_proc_show",
+      "category": "readonly",
+      "summary": "per-irq 实际生效的 CPU 列表（逗号分隔格式），与 effective_affinity 同物异格式，看中断真正落在哪个 CPU。"
+    },
+    {
+      "kernel_name": "irq_spurious_proc_show",
+      "category": "readonly",
+      "summary": "per-irq spurious（伪中断/未处理中断）统计：count/unhandled/last_unhandled_ms，判断该中断是否失控被禁用。"
+    },
+    {
+      "kernel_name": "default_affinity_proc_ops",
+      "category": "tunable",
+      "summary": "全局默认中断亲和性 CPU 掩码，未显式指定亲和性的新中断继承此掩码；写即改默认。"
+    },
+    {
+      "kernel_name": "noirqdebug_setup",
+      "category": "tunable",
+      "summary": "boot cmdline 开关：禁用中断未处理检测/自动禁用逻辑（noirqdebug=1 → 全中断 irq_settings_set_no_debug）。"
+    },
+    {
+      "kernel_name": "irqfixup_setup",
+      "category": "tunable",
+      "summary": "boot cmdline 开关：启用 misrouted（错路由）中断修复（irqfixup=1 → irqfixup=1），尝试在其他 IRQ 上跑共享 handler 找真主。"
+    },
+    {
+      "kernel_name": "irqpoll_setup",
+      "category": "tunable",
+      "summary": "boot cmdline 开关：启用 misrouted 修复+定时轮询（irqpoll → irqfixup=2），每 HZ/10 周期扫所有 SPURIOUS_DISABLED 中断。"
+    },
+    {
+      "kernel_name": "irq_affinity_setup",
+      "category": "tunable",
+      "summary": "boot cmdline 参数 irqaffinity=<cpulist>：boot 时设全局默认中断亲和性掩码，覆盖默认 all-CPUs。"
+    },
+    {
+      "kernel_name": "irqhandler_duration_check_setup",
+      "category": "tunable",
+      "summary": "boot cmdline 参数 irqhandler.duration_warn_us=<us>：设 IRQ handler 执行时长告警阈值，超限 pr_warn_ratelimited 通报长中断。"
+    }
+  ]
+}

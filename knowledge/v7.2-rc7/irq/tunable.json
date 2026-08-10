@@ -1,0 +1,198 @@
+{
+  "module": "irq",
+  "version": "v7.2-rc7",
+  "_doc": "irq 模块可调参数。per-irq 项 path 含 <irqN> 占位符，标 per_irq:true；消费者给建议时需代入实际中断号（如 /proc/irq/23/smp_affinity）。smp_affinity/smp_affinity_list 是同物异格式（位图 vs cpulist），任选其一改即可。default_smp_affinity 是全局默认，新中断继承。cmdline 5 项标 boot_only:true（运行时不可改，需 reboot 改 grub）。所有方向字段按 §5 good_for/bad_for 动词+方向约定填写，bad_for 写该方向真实代价非镜像。type 列原为 unknown 的 smp_affinity/smp_affinity_list 已据源码 proc_create_data 模式 S_IRUGO|S_IWUSR 判为 tunable。",
+  "items": [
+    {
+      "name": "smp_affinity",
+      "kernel_name": "irq_affinity_proc_ops",
+      "path": "/proc/irq/<irqN>/smp_affinity",
+      "category": "tunable",
+      "gate": "CONFIG_SMP",
+      "per_irq": true,
+      "unit": "bitmap",
+      "default": "irq_default_affinity（新中断继承全局默认；默认 cpumask_setall 即所有 CPU）",
+      "range": {"min": "至少命中一个 online CPU", "special": {"空集或全离线": "回退到 irq_select_affinity_usr 或 -EINVAL；不允许完全禁掉中断"}},
+      "summary": "per-irq 中断亲和性 CPU 掩码（位图格式 /proc/irq/<irqN>/smp_affinity），写即请求把该中断投递限制在指定 CPU 集合。源码 proc_create_data 模式 S_IRUGO|S_IWUSR（可写，工单 type=unknown 是 scan 因 umode 是变量无法判，已判 tunable）。",
+      "when_to_increase": ["把该中断绑到更多 CPU 让其可被更多核处理", "中断处理负载集中某核想分散"],
+      "when_to_decrease": ["把该中断固定到少量特定核以提升 cache/NUMA 局部性", "隔离 CPU 不收中断以给业务核让路", "实时隔离把 IRQ 收束到 housekeeping 核"],
+      "increasing": {
+        "good_for": ["扩大中断可投递 CPU 池", "降低单核中断处理压力", "允许负载均衡在中断间调度"],
+        "bad_for": ["削弱 cache 局部性（中断跨更多核漂移）", "加剧 NUMA 远端访问", "干扰被纳入集合的实时/业务核"]
+      },
+      "decreasing": {
+        "good_for": ["收束中断到固定核提升 cache 命中", "提升 NUMA 局部性（绑到中断所属 node 的核）", "腾出 CPU 给业务/实时任务"],
+        "bad_for": ["收束过窄致单核中断处理瓶颈", "目标核离线后中断无处投递需重设", "对 AFFINITY_MANAGED/PER_CPU 中断写无效（irq_can_set_affinity_usr 返回 false，写返回 -EPERM）"]
+      },
+      "consumes": ["kernel/irq/proc.c:write_irq_affinity", "kernel/irq/manage.c:__irq_set_affinity"],
+      "version_notes": "工单 type=unknown 因 scan 无法解析运行时变量 umode；源码 umode=S_IRUGO|S_IWUSR（irq_can_set_affinity_usr 为真时加 S_IWUSR），判为 tunable。AFFINITY_MANAGED 中断（如多队列网卡 managed-IRQ）写返回 -EPERM，对 PER_CPU 中断同。no_irq_affinity 全局标志为真时也 -EPERM（极少触发）。"
+    },
+    {
+      "name": "smp_affinity_list",
+      "kernel_name": "irq_affinity_list_proc_ops",
+      "path": "/proc/irq/<irqN>/smp_affinity_list",
+      "category": "tunable",
+      "gate": "CONFIG_SMP",
+      "per_irq": true,
+      "unit": "cpulist",
+      "default": "irq_default_affinity（与 smp_affinity 同一底层掩码，仅显示格式不同；默认全部 CPU）",
+      "range": {"min": "至少命中一个 online CPU", "special": {"空集或全离线": "回退到 irq_select_affinity_usr 或 -EINVAL"}},
+      "summary": "per-irq 中断亲和性 CPU 列表（逗号分隔的 CPU 号/range 格式，如 0-3,8），与 smp_affinity 是同一掩码的不同表示，写即请求改绑核。源码模式 S_IRUGO|S_IWUSR，工单 type=unknown 已判 tunable。",
+      "when_to_increase": ["想用更易读的 cpulist 格式把中断绑到更多核", "中断负载集中想分散到多核"],
+      "when_to_decrease": ["把中断收束到少量核提升局部性", "为隔离 CPU 收束中断到 housekeeping 核"],
+      "increasing": {
+        "good_for": ["扩大中断可投递 CPU 池", "降低单核中断处理压力"],
+        "bad_for": ["削弱 cache/NUMA 局部性", "干扰被纳入集合的核"]
+      },
+      "decreasing": {
+        "good_for": ["收束中断到固定核提升 cache 命中", "提升 NUMA 局部性", "腾出 CPU 给业务"],
+        "bad_for": ["收束过窄致单核中断瓶颈", "对 AFFINITY_MANAGED/PER_CPU 中断写返回 -EPERM"]
+      },
+      "consumes": ["kernel/irq/proc.c:write_irq_affinity", "kernel/irq/manage.c:__irq_set_affinity"],
+      "version_notes": "与 smp_affinity 共享 write_irq_affinity(type 参数区分 0=bitmap/1=list)，改任一另一个同步反映。工单 type=unknown 同 smp_affinity 原因，判 tunable。"
+    },
+    {
+      "name": "irq/default_smp_affinity",
+      "kernel_name": "default_affinity_proc_ops",
+      "path": "/proc/irq/default_smp_affinity",
+      "category": "tunable",
+      "gate": "CONFIG_SMP",
+      "unit": "bitmap",
+      "default": "cpumask_setall(irq_default_affinity) 即所有 online CPU（init_irq_default_affinity 默认全开）",
+      "range": {"min": "至少命中一个 online CPU", "special": {"空集或全离线": "写返回 -EINVAL，不允许完全禁掉"}},
+      "summary": "全局默认中断亲和性 CPU 掩码（/proc/irq/default_smp_affinity，权限 0644）。未显式设亲和性的新中断在 irq_setup_affinity/desc_smp_init 时继承此掩码。写即改默认，已存在中断不受影响（除非重新 setup_affinity）。",
+      "when_to_increase": ["让新中断默认可去更多核", "默认中断负载分散不够想放宽"],
+      "when_to_decrease": ["让新中断默认收束到特定核集", "把中断默认隔离出业务核/实时核", "NUMA 想让新中断默认落在近端 node"],
+      "increasing": {
+        "good_for": ["放宽新中断默认投递范围", "降低默认单核中断压力"],
+        "bad_for": ["新中断默认可在更多核漂移削弱局部性", "把中断默认纳入业务/实时核"]
+      },
+      "decreasing": {
+        "good_for": ["收束新中断默认到固定核集提升局部性", "隔离业务/实时核免收默认中断", "NUMA 默认局部性更好"],
+        "bad_for": ["收过窄致新中断单核瓶颈", "目标默认核集离线时新中断无可用 CPU（写时校验，但仍可能后续离线）"]
+      },
+      "consumes": ["kernel/irq/proc.c:default_affinity_write", "kernel/irq/manage.c:irq_setup_affinity", "kernel/irq/irqdesc.c:desc_smp_init"],
+      "version_notes": "权限 0644（可读可写）。boot cmdline irqaffinity= 在 init_irq_default_affinity 前覆盖此默认。改此只影响后续新中断的默认继承，已设过亲和性的中断不回退。"
+    },
+    {
+      "name": "noirqdebug",
+      "kernel_name": "noirqdebug_setup",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "boot_only": true,
+      "unit": "cmdline",
+      "default": "未指定（noirqdebug 默认 false，启用未处理中断检测）",
+      "range": {},
+      "summary": "boot cmdline 开关 noirqdebug：禁用中断未处理/伪中断检测与自动禁用逻辑。设 noirqdebug=1 → noirqdebug=true → 在 request_irq 路径对所有中断 irq_settings_set_no_debug，note_interrupt 不再累积 unhandled 计数也不自动 disable。",
+      "when_to_increase": ["启用 noirqdebug（关闭检测）以避免关键中断被误判伪中断自动禁掉", "中断风暴导致 IRQ 被误禁用系统卡死", "调试时不想让 spurious 检测干扰"],
+      "when_to_decrease": ["关闭 noirqdebug（恢复检测）以让未处理中断被识别和禁用", "怀疑有硬件坏中断想靠内核自动隔离"],
+      "increasing": {
+        "good_for": ["避免真中断因偶发未处理被误禁用", "停掉 spurious 检测开销", "保证关键中断不被自动 disable"],
+        "bad_for": ["真正坏的中断不再被自动隔离会持续风暴", "丢失 spurious 计数诊断信号（/proc/irq/<irqN>/spurious 不再累积）", "掩盖驱动 bug（handler 返回 IRQ_NONE 不被发现）"]
+      },
+      "decreasing": {
+        "good_for": ["恢复未处理中断的自动检测与隔离", "保留 spurious 统计供诊断"],
+        "bad_for": ["偶发未处理的真中断可能被误禁", "增加 note_interrupt 路径开销"]
+      },
+      "consumes": ["kernel/irq/spurious.c:note_interrupt", "kernel/irq/manage.c:request_threaded_irq"],
+      "version_notes": "boot_only:true（__setup，运行时不可改；虽有 module_param(noirqdebug,bool,0644) 但仅模块加载路径用，cmdline 设定后 reboot 才能撤销）。cmdline 形式 noirqdebug（无值，置 1）。note_interrupt 在 irq_count 累积到 100000 且 irqs_unhandled>99900 时 pr_emerg 并 irq_disable + IRQS_SPURIOUS_DISABLED。"
+    },
+    {
+      "name": "irqfixup",
+      "kernel_name": "irqfixup_setup",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "boot_only": true,
+      "unit": "cmdline",
+      "default": "未指定（irqfixup 默认 0，不启用 misrouted 修复）",
+      "range": {"special": {"1": "irqfixup_setup 设 irqfixup=1，启用 misrouted 修复（仅在 IRQ_NONE 时尝试其他共享 handler）"}},
+      "summary": "boot cmdline 开关 irqfixup：启用 misrouted（错路由）中断修复。设 irqfixup → irqfixup=1，try_misrouted_irq 在 action_ret==IRQ_NONE 时返回 true 触发 misrouted_irq 扫描所有共享 IRQ 的 handler 找真主。PREEMPT_RT 不支持（pr_warn 后忽略）。",
+      "when_to_increase": ["启用 misrouted 修复以应对坏固件导致中断错路由", "共享 IRQ 上某设备中断无人响应"],
+      "when_to_decrease": ["关闭 misrouted 修复（默认即关）以恢复正常中断处理路径"],
+      "increasing": {
+        "good_for": ["让错路由中断有机会被正确 handler 处理", "应对坏固件共享 IRQ 场景"],
+        "bad_for": ["每个 IRQ_NONE 中断触发全量 handler 扫描开销大", "pr_warn 提示可能影响系统性能", "PREEMPT_RT 内核无效（不支持）"]
+      },
+      "decreasing": {
+        "good_for": ["恢复正常中断处理路径减少开销", "避免误扫正常共享 IRQ"],
+        "bad_for": ["真错路由中断无人处理可能被 spurious 检测禁掉"]
+      },
+      "consumes": ["kernel/irq/spurious.c:try_misrouted_irq", "kernel/irq/spurious.c:misrouted_irq"],
+      "version_notes": "boot_only:true（__setup，cmdline 形式 irqfixup 无值）。PREEMPT_RT 内核 pr_warn 后返回 1 但不生效（irqfixup 仍 0，因 if 分支 return 前）。irqfixup=1 是 irqpoll=2 的弱化版（后者还加定时轮询）。"
+    },
+    {
+      "name": "irqpoll",
+      "kernel_name": "irqpoll_setup",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "boot_only": true,
+      "unit": "cmdline",
+      "default": "未指定（irqfixup 默认 0，不启用轮询）",
+      "range": {"special": {"启用": "irqpoll 设 irqfixup=2，启用 misrouted 修复 + 每 HZ/10 定时轮询 SPURIOUS_DISABLED 中断"}},
+      "summary": "boot cmdline 开关 irqpoll：启用 misrouted 修复 + 定时轮询。设 irqpoll → irqfixup=2，try_misrouted_irq 对 IRQF_IRQPOLL 标记的 handler 也尝试；poll_spurious_irqs 定时器每 POLL_SPURIOUS_IRQ_INTERVAL=HZ/10 周期扫描所有 IRQS_SPURIOUS_DISABLED 中断尝试 try_one_irq。PREEMPT_RT 不支持。",
+      "when_to_increase": ["启用 irqpoll 以应对坏固件导致中断错路由且已被 spurious 检测禁掉需轮询恢复", "中断被禁后系统部分功能卡死需周期性重试"],
+      "when_to_decrease": ["关闭 irqpoll（默认即关）以去除轮询定时器开销"],
+      "increasing": {
+        "good_for": ["让被禁掉的坏中断周期性重试找到正确 handler", "应对坏固件+中断已被自动禁的极端场景"],
+        "bad_for": ["每 HZ/10 全量扫描被禁中断开销显著", "pr_warn 提示可能显著影响系统性能", "PREEMPT_RT 内核无效"]
+      },
+      "decreasing": {
+        "good_for": ["去除轮询定时器开销", "恢复正常中断处理路径"],
+        "bad_for": ["被禁掉的坏中断不再被周期性重试"]
+      },
+      "consumes": ["kernel/irq/spurious.c:try_misrouted_irq", "kernel/irq/spurious.c:poll_spurious_irqs", "kernel/irq/spurious.c:note_interrupt"],
+      "version_notes": "boot_only:true（__setup，cmdline 形式 irqpoll 无值）。irqfixup=2 是 irqfixup=1 的强化版（额外 try_misrouted_irq 对 IRQF_IRQPOLL 也返回 true，并启动 poll_spurious_irq_timer）。"
+    },
+    {
+      "name": "irqaffinity",
+      "kernel_name": "irq_affinity_setup",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "CONFIG_SMP",
+      "boot_only": true,
+      "unit": "cmdline",
+      "default": "未指定（init_irq_default_affinity 默认 cpumask_setall 即所有 CPU）",
+      "range": {"min": "cpulist 格式（如 0-3,8），至少含 boot CPU"},
+      "summary": "boot cmdline 参数 irqaffinity=<cpulist>：boot 时设全局默认中断亲和性掩码 irq_default_affinity。alloc_bootmem_cpumask_var + cpulist_parse 解析，并强制把 boot CPU 加入（避免随机掩码导致系统不可用）。后续新中断的 desc_smp_init/irq_setup_affinity 继承此掩码。",
+      "when_to_increase": ["boot 时把默认中断亲和性放宽到更多核", "默认中断负载想分散"],
+      "when_to_decrease": ["boot 时把默认中断收束到特定核集", "boot 时就把中断隔离出业务/实时核", "NUMA 想让默认中断落在近端 node 的核"],
+      "increasing": {
+        "good_for": ["放宽新中断默认投递范围", "降低默认单核中断压力"],
+        "bad_for": ["新中断默认可在更多核漂移削弱局部性", "默认把中断纳入业务/实时核"]
+      },
+      "decreasing": {
+        "good_for": ["boot 即收束新中断默认到固定核集", "boot 即隔离业务/实时核免收默认中断", "NUMA 默认局部性更好"],
+        "bad_for": ["收过窄致新中断单核瓶颈", "掩码全离线时强制只含 boot CPU（cpumask_set_cpu(smp_processor_id())）"]
+      },
+      "consumes": ["kernel/irq/irqdesc.c:init_irq_default_affinity", "kernel/irq/irqdesc.c:desc_smp_init", "kernel/irq/manage.c:irq_setup_affinity"],
+      "version_notes": "boot_only:true（__setup，运行时不可改；要改默认亲和性用 /proc/irq/default_smp_affinity）。强制至少含 boot CPU（源码注释 'don't want to end up with bugreports caused by random commandline masks'）。gate=CONFIG_SMP。"
+    },
+    {
+      "name": "irqhandler.duration_warn_us",
+      "kernel_name": "irqhandler_duration_check_setup",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "boot_only": true,
+      "unit": "us",
+      "default": "未指定（irqhandler_duration_check_enabled 静态分支默认 false，不检测）",
+      "range": {"min": 1, "special": {"0": "pr_err 拒绝，return 0 不生效；必须 > 0"}},
+      "summary": "boot cmdline 参数 irqhandler.duration_warn_us=<us>：设 IRQ handler 执行时长告警阈值（微秒）。kstrtoul 解析后存入 irqhandler_duration_threshold_ns（×1000 转 ns），static_branch_enable 启用 irqhandler_duration_check_enabled。__handle_irq_event_percpu 在每个 handler 调用前后用 local_clock 算 delta_ns，超阈值则 pr_warn_ratelimited 通报 [CPU%u] long duration of IRQ[%u:%ps]。",
+      "when_to_increase": ["把告警阈值调大只关注超长中断", "减少高频短中断的告警噪音", "只想抓极端长中断"],
+      "when_to_decrease": ["把告警阈值调小抓更多稍长中断", "想发现潜在长中断 handler 优化点", "实时性调试想精确定位长 IRQ"],
+      "increasing": {
+        "good_for": ["减少告警噪音只通报真正超长中断", "降低 pr_warn_ratelimited 频率"],
+        "bad_for": ["漏掉中等长度但影响实时的 handler", "掩盖潜在长中断问题"]
+      },
+      "decreasing": {
+        "good_for": ["更早发现长中断 handler", "精确定位影响实时性的 IRQ", "辅助优化 handler 性能"],
+        "bad_for": ["阈值过小致正常短中断也告警刷屏（虽有 ratelimited 仍可能噪音）", "增加每次 IRQ 的 local_clock + 比较开销"]
+      },
+      "consumes": ["kernel/irq/handle.c:__handle_irq_event_percpu", "kernel/irq/handle.c:irqhandler_duration_check"],
+      "version_notes": "boot_only:true（__setup，运行时不可改；要改需 reboot 改 grub）。cmdline 形式 irqhandler.duration_warn_us=<us>（带值）。设为 0 或非数字 pr_err 拒绝（return 0）。static_branch_enable 使 default-false 静态分支翻 true，未设时 __handle_irq_event_percpu 走 else 分支无额外开销。"
+    }
+  ]
+}

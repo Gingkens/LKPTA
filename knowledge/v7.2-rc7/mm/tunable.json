@@ -1,0 +1,3162 @@
+{
+  "module": "mm",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "name": "min_free_kbytes",
+      "kernel_name": "min_free_kbytes",
+      "path": "/proc/sys/vm/min_free_kbytes",
+      "category": "tunable",
+      "gate": "",
+      "unit": "kB",
+      "default": 1024,
+      "range": {
+        "min": 0,
+        "special": {}
+      },
+      "summary": "每个zone的最小空闲页数(kB)基准,直接驱动 min/low/high 水位线计算。内核启动时按 sqrt(lowmem_kbytes*16) 重算并 clamp 到 [128,262144],user_min_free_kbytes(由本 sysctl 设)优先于自动值。",
+      "increasing": {
+        "good_for": [
+          "提升抗突发分配压力",
+          "扩大 PF_MEMALLOC/__GFP_HIGH 储备",
+          "促使 kswapd 更早介入"
+        ],
+        "bad_for": [
+          "减少可分配内存",
+          "大内存机器浪费"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升可用内存",
+          "大内存机器按默认即可"
+        ],
+        "bad_for": [
+          "加剧紧急分配失败",
+          "升高 OOM 风险"
+        ]
+      },
+      "consumes": [
+        "mm/page_alloc.c:__setup_per_zone_wmarks",
+        "mm/page_alloc.c:calculate_min_free_kbytes"
+      ],
+      "version_notes": "extra1=SYSCTL_ZERO(无上界),实际硬性由 calculate_min_free_kbytes clamp 到 262144",
+      "when_to_increase": [
+        "突发分配压力大常 OOM",
+        "kswapd 介入太晚"
+      ],
+      "when_to_decrease": [
+        "可用内存浪费多",
+        "大内存机器想最大化可用"
+      ]
+    },
+    {
+      "name": "watermark_boost_factor",
+      "kernel_name": "watermark_boost_factor",
+      "path": "/proc/sys/vm/watermark_boost_factor",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ratio",
+      "default": 15000,
+      "range": {
+        "min": 0,
+        "special": {
+          "0": "禁用 boost"
+        }
+      },
+      "summary": "kswapd 触发时把 zone->watermark_boost 提升 = mult_frac(high, factor, 10000);为突发分配留缓冲。",
+      "increasing": {
+        "good_for": [
+          "提升 zone high 水位临时抬升幅度",
+          "扩大突发分配缓冲"
+        ],
+        "bad_for": [
+          "加剧 kswapd 回收压力",
+          "减少稳态可用内存"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 kswapd 多余回收",
+          "保留更多稳态可用内存"
+        ],
+        "bad_for": [
+          "突发分配更易进 direct reclaim"
+        ]
+      },
+      "consumes": [
+        "mm/page_alloc.c:boost_watermark"
+      ],
+      "version_notes": "unit 原记为 1/10000(分母10000,即 mult_frac(high,factor,10000));规范化为 ratio。",
+      "when_to_increase": [
+        "突发分配频繁抖动",
+        "kswapd boost 不足"
+      ],
+      "when_to_decrease": [
+        "kswapd 回收过早占用太多"
+      ]
+    },
+    {
+      "name": "watermark_scale_factor",
+      "kernel_name": "watermark_scale_factor",
+      "path": "/proc/sys/vm/watermark_scale_factor",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ratio",
+      "default": 10,
+      "range": {
+        "min": 1,
+        "max": 3000,
+        "special": {}
+      },
+      "summary": "zone (high-min) 和 (low-min) 间距 = max(pages_min>>2, mult_frac(managed, factor, 10000));调大增加回收激进度。",
+      "increasing": {
+        "good_for": [
+          "扩大 high-low 水位间距",
+          "促进 kswapd 更早介入"
+        ],
+        "bad_for": [
+          "加剧 kswapd 长时间回收",
+          "恶化稳态内存利用率"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "推迟 kswapd 启动",
+          "提升内存利用率"
+        ],
+        "bad_for": [
+          "突发负载易落入 direct reclaim"
+        ]
+      },
+      "consumes": [
+        "mm/page_alloc.c:__setup_per_zone_wmarks"
+      ],
+      "version_notes": "unit 原记为 1/10000(分母10000,即 mult_frac(high,factor,10000));规范化为 ratio。",
+      "when_to_increase": [
+        "direct reclaim 频发想拉大 kswapd 与 direct 阈值间距"
+      ],
+      "when_to_decrease": [
+        "kswapd 启动过早想推迟"
+      ]
+    },
+    {
+      "name": "defrag_mode",
+      "kernel_name": "defrag_mode",
+      "path": "/proc/sys/vm/defrag_mode",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "分配路径反碎片模式开关。1=对每次分配强制 ALLOC_NOFRAGMENT 并按 pageblock_order 唤醒 kswapd;0=按 ZONE_NORMAL+ZONE_DMA32 是否多 node 决策。",
+      "increasing": {
+        "good_for": [
+          "强制分配路径反碎片",
+          "提升高 order 分配成功率"
+        ],
+        "bad_for": [
+          "加剧 kswapd 唤醒频率",
+          "增加分配路径回收开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少分配路径回收开销"
+        ],
+        "bad_for": [
+          "升高高 order 分配失败率"
+        ]
+      },
+      "consumes": [
+        "mm/page_alloc.c:prepare_alloc_pages",
+        "mm/page_alloc.c:wake_all_kswapds"
+      ],
+      "when_to_increase": [
+        "高阶分配失败多",
+        "碎片化致 alloc stall"
+      ],
+      "when_to_decrease": [
+        "kswapd 唤醒过频想减少回收开销"
+      ]
+    },
+    {
+      "name": "percpu_pagelist_high_fraction",
+      "kernel_name": "percpu_pagelist_high_fraction",
+      "path": "/proc/sys/vm/percpu_pagelist_high_fraction",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ratio",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "special": {
+          "0": "用默认 zone_managed_pages/256 公式"
+        }
+      },
+      "summary": "每 CPU 每 zone 页缓存 high 上限分数 = zone_managed_pages / fraction。0=默认公式;>0 需 ≥ MIN_PERCPU_PAGELIST_HIGH_FRACTION(=8),否则写失败回滚。",
+      "increasing": {
+        "good_for": [
+          "扩大每 CPU 页缓存 high 上限",
+          "减少回 buddy 的 flush 次数"
+        ],
+        "bad_for": [
+          "加剧每 CPU 内存独占",
+          "恶化跨 CPU 内存不均"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少每 CPU 内存独占"
+        ],
+        "bad_for": [
+          "增加 flush 频率",
+          "加剧 alloc 热点路径锁竞争"
+        ]
+      },
+      "consumes": [
+        "mm/page_alloc.c:zone_set_pageset_high_and_batch",
+        "mm/page_alloc.c:percpu_pagelist_high_fraction_sysctl_handler"
+      ],
+      "version_notes": "unit 原记为 fraction(分母10000,即 mult_frac(high,factor,10000));规范化为 ratio。",
+      "when_to_increase": [
+        "跨 CPU 分配抖动",
+        "per-CPU 缓存不够"
+      ],
+      "when_to_decrease": [
+        "per-CPU 占用过多内存"
+      ]
+    },
+    {
+      "name": "lowmem_reserve_ratio",
+      "kernel_name": "sysctl_lowmem_reserve_ratio",
+      "path": "/proc/sys/vm/lowmem_reserve_ratio",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ratio",
+      "default": 256,
+      "range": {
+        "min": 0,
+        "special": {
+          "0": "对该 zone 不保留任何 reserve"
+        }
+      },
+      "summary": "低 zone 保留页 = managed_pages / ratio;数组形式(每 zone 一值),默认 DMA=256/DMA32=256/Normal=32/HIGHMEM=0/Movable=0;调大保留更多。",
+      "increasing": {
+        "good_for": [
+          "提升低 zone 抗 fallback 储备",
+          "保住 DMA 类稀缺资源"
+        ],
+        "bad_for": [
+          "恶化低 zone 可用页",
+          "影响需低 zone 的设备分配"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "释放低 zone 可用页"
+        ],
+        "bad_for": [
+          "加剧高 zone fallback 耗尽低 zone 风险"
+        ]
+      },
+      "consumes": [
+        "mm/page_alloc.c:setup_per_zone_lowmem_reserve"
+      ],
+      "when_to_increase": [
+        "DMA/低 zone 被高 zone fallback 耗尽"
+      ],
+      "when_to_decrease": [
+        "低 zone 资源闲置想用更多"
+      ]
+    },
+    {
+      "name": "numa_zonelist_order",
+      "kernel_name": "numa_zonelist_order",
+      "path": "/proc/sys/vm/numa_zonelist_order",
+      "category": "tunable",
+      "gate": "CONFIG_NUMA",
+      "unit": "enum: Node|Zone",
+      "default": "Node",
+      "range": {},
+      "summary": "NUMA zonelist 排序:Node 模式按 node 优先,Zone 模式按 zone type 优先;不识别的值会 pr_warn 并忽略。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,枚举)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,枚举)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/page_alloc.c:numa_zonelist_order_handler",
+        "mm/page_alloc.c:__parse_numa_zonelist_order"
+      ],
+      "when_to_increase": [
+        "想按 node 优先分配(NUMA 友好)"
+      ],
+      "when_to_decrease": [
+        "想按 zone type 优先分配"
+      ]
+    },
+    {
+      "name": "min_unmapped_ratio",
+      "kernel_name": "sysctl_min_unmapped_ratio",
+      "path": "/proc/sys/vm/min_unmapped_ratio",
+      "category": "tunable",
+      "gate": "CONFIG_NUMA",
+      "unit": "%",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 100,
+        "special": {}
+      },
+      "summary": "pgdat->min_unmapped_pages = sum(managed_pages * ratio / 100);node_reclaim 在 unmapped_file_pages < min_unmapped_pages 时跳过,认为回收无意义。",
+      "increasing": {
+        "good_for": [
+          "提升 node reclaim 触发门槛",
+          "减少无意义回收"
+        ],
+        "bad_for": [
+          "恶化本 node 内存压力下回收触发难"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "促进 node reclaim 触发"
+        ],
+        "bad_for": [
+          "加剧无效回收扫描"
+        ]
+      },
+      "consumes": [
+        "mm/vmscan.c:setup_min_unmapped_ratio",
+        "mm/page_alloc.c:sysctl_min_unmapped_ratio_sysctl_handler"
+      ],
+      "when_to_increase": [
+        "node reclaim 触发但有效回收太少"
+      ],
+      "when_to_decrease": [
+        "node reclaim 触发条件太严"
+      ]
+    },
+    {
+      "name": "min_slab_ratio",
+      "kernel_name": "sysctl_min_slab_ratio",
+      "path": "/proc/sys/vm/min_slab_ratio",
+      "category": "tunable",
+      "gate": "CONFIG_NUMA",
+      "unit": "%",
+      "default": 5,
+      "range": {
+        "min": 0,
+        "max": 100,
+        "special": {}
+      },
+      "summary": "pgdat->min_slab_pages = sum(managed_pages * ratio / 100);node_reclaim 在 slab 页 < min_slab_pages 时跳过 slab shrink。",
+      "increasing": {
+        "good_for": [
+          "提升 slab shrink 触发门槛"
+        ],
+        "bad_for": [
+          "恶化 slab 高占用时回收滞后"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "促进 slab shrink"
+        ],
+        "bad_for": [
+          "加剧 slab shrink 频率",
+          "增加 shrink 开销"
+        ]
+      },
+      "consumes": [
+        "mm/vmscan.c:setup_min_slab_ratio",
+        "mm/page_alloc.c:sysctl_min_slab_ratio_sysctl_handler"
+      ],
+      "when_to_increase": [
+        "slab 回收过早触发"
+      ],
+      "when_to_decrease": [
+        "slab 占用高但回收迟迟不触发"
+      ]
+    },
+    {
+      "name": "swappiness",
+      "kernel_name": "vm_swappiness",
+      "path": "/proc/sys/vm/swappiness",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 60,
+      "range": {
+        "min": 0,
+        "max": 200,
+        "special": {}
+      },
+      "summary": "calculate_pressure_balance 中 ap = swappiness*(total_cost+1),fp=(200-swappiness)*(total_cost+1);100 时 anon/file 等价,>100 倾向 swap。",
+      "increasing": {
+        "good_for": [
+          "增加 anon swap 出",
+          "提升 file cache 保留"
+        ],
+        "bad_for": [
+          "加剧 swap IO",
+          "增加 IO 压力"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 swap IO",
+          "保住 anon 内存"
+        ],
+        "bad_for": [
+          "加剧 file cache 被挤"
+        ]
+      },
+      "consumes": [
+        "mm/vmscan.c:sc_swappiness",
+        "mm/vmscan.c:calculate_pressure_balance"
+      ],
+      "when_to_increase": [
+        "swap 不够想多换出 anon 保 file cache",
+        "file cache 频繁被挤想保住"
+      ],
+      "when_to_decrease": [
+        "swap IO 太高想少 swap",
+        "想保 anon 内存不被换出"
+      ]
+    },
+    {
+      "name": "zone_reclaim_mode",
+      "kernel_name": "node_reclaim_mode",
+      "path": "/proc/sys/vm/zone_reclaim_mode",
+      "category": "tunable",
+      "gate": "CONFIG_NUMA",
+      "unit": "bits",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "special": {
+          "0": "关闭本地回收,允许跨 node fallback",
+          "1": "RECLAIM_ZONE 开启本地回收",
+          "2": "RECLAIM_WRITE 允许 writeout",
+          "4": "RECLAIM_UNMAP 允许 unmap"
+        }
+      },
+      "summary": "NUMA node 本地回收模式位图(bit0=开启 zone reclaim;bit1=允许 writeout 写回脏页;bit2=允许 unmap 解映射)。0=关,fallback 到其他 node;>0 时优先回收本 node。",
+      "increasing": {
+        "good_for": [
+          "开启 zone reclaim / writeout / unmap",
+          "降低跨 node 远端访问"
+        ],
+        "bad_for": [
+          "加剧本 node 内存回收压力",
+          "恶化回收开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "允许跨 node fallback",
+          "减少本 node 回收开销"
+        ],
+        "bad_for": [
+          "恶化 NUMA 局部性",
+          "增加远端访问"
+        ]
+      },
+      "consumes": [
+        "mm/vmscan.c:node_pagecache_reclaimable",
+        "mm/vmscan.c:__node_reclaim"
+      ],
+      "when_to_increase": [
+        "NUMA 局部性差想开本地回收"
+      ],
+      "when_to_decrease": [
+        "本地回收开销大想跨 node fallback"
+      ]
+    },
+    {
+      "name": "compact_memory",
+      "kernel_name": "sysctl_compact_memory",
+      "path": "/proc/sys/vm/compact_memory",
+      "category": "tunable",
+      "gate": "CONFIG_COMPACTION",
+      "unit": "trigger",
+      "default": 0,
+      "range": {
+        "special": {
+          "1": "触发 compact_nodes() 全节点紧缩"
+        }
+      },
+      "summary": "只写触发型 sysctl(mode 0200),写1调用 compact_nodes() 同步紧缩所有 node;非1值返回 EINVAL。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,触发动作)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,触发动作)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/compaction.c:sysctl_compaction_handler"
+      ],
+      "when_to_increase": [
+        "高 order 分配失败多想立即紧缩一次"
+      ],
+      "when_to_decrease": []
+    },
+    {
+      "name": "compaction_proactiveness",
+      "kernel_name": "sysctl_compaction_proactiveness",
+      "path": "/proc/sys/vm/compaction_proactiveness",
+      "category": "tunable",
+      "gate": "CONFIG_COMPACTION",
+      "unit": "%",
+      "default": 20,
+      "range": {
+        "min": 0,
+        "max": 100,
+        "special": {
+          "0": "禁用主动紧缩"
+        }
+      },
+      "summary": "kcompactd 主动紧缩激进度;wmark_low=100-proactiveness,wmark_high=wmark_low+min(10,wmark_low/2);fragmentation_score 超 wmark_high 时触发主动紧缩。",
+      "increasing": {
+        "good_for": [
+          "提升 kcompactd 主动紧缩激进度",
+          "提升高 order 分配成功率"
+        ],
+        "bad_for": [
+          "加剧 kcompactd CPU 占用"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 kcompactd CPU 占用"
+        ],
+        "bad_for": [
+          "加剧碎片化",
+          "升高高 order 分配失败率"
+        ]
+      },
+      "consumes": [
+        "mm/compaction.c:fragmentation_score_wmark",
+        "mm/compaction.c:should_proactive_compact_node"
+      ],
+      "when_to_increase": [
+        "碎片化高 order 分配失败多"
+      ],
+      "when_to_decrease": [
+        "kcompactd 占用 CPU 高"
+      ]
+    },
+    {
+      "name": "extfrag_threshold",
+      "kernel_name": "sysctl_extfrag_threshold",
+      "path": "/proc/sys/vm/extfrag_threshold",
+      "category": "tunable",
+      "gate": "CONFIG_COMPACTION",
+      "unit": "count",
+      "default": 500,
+      "range": {
+        "min": 0,
+        "max": 1000,
+        "special": {}
+      },
+      "summary": "costly(>PAGE_ALLOC_COSTLY_ORDER) 分配时,若 fragmentation_index∈[0,threshold] 则判定为内存不足而非碎片,跳过紧缩。",
+      "increasing": {
+        "good_for": [
+          "提升 costly 分配时尝试紧缩的倾向"
+        ],
+        "bad_for": [
+          "加剧无效紧缩开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少无效紧缩"
+        ],
+        "bad_for": [
+          "恶化碎片化时直接放弃紧缩",
+          "升高高 order 分配失败率"
+        ]
+      },
+      "consumes": [
+        "mm/compaction.c:compaction_suitable"
+      ],
+      "when_to_increase": [
+        "紧缩尝试多但无效"
+      ],
+      "when_to_decrease": [
+        "碎片化时直接放弃紧缩"
+      ]
+    },
+    {
+      "name": "compact_unevictable_allowed",
+      "kernel_name": "sysctl_compact_unevictable_allowed",
+      "path": "/proc/sys/vm/compact_unevictable_allowed",
+      "category": "tunable",
+      "gate": "CONFIG_COMPACTION",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "紧缩时是否允许隔离 unevictable 页(mlocked/ramfs 等);默认=CONFIG_COMPACT_UNEVICTABLE_DEFAULT。RT 系统改值会打警告。",
+      "increasing": {
+        "good_for": [
+          "扩大紧缩可用页池",
+          "提升紧缩可隔离范围"
+        ],
+        "bad_for": [
+          "可能移动 mlocked/ramfs 等不可迁移页"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "保护 mlock 页不被迁移"
+        ],
+        "bad_for": [
+          "紧缩可用页减少"
+        ]
+      },
+      "consumes": [
+        "mm/compaction.c:compact_zone"
+      ],
+      "when_to_increase": [
+        "紧缩可用页不足想动 unevictable"
+      ],
+      "when_to_decrease": [
+        "想保护 mlock 页不被迁移"
+      ]
+    },
+    {
+      "name": "stat_interval",
+      "kernel_name": "sysctl_stat_interval",
+      "path": "/proc/sys/vm/stat_interval",
+      "category": "tunable",
+      "gate": "CONFIG_PROC_FS CONFIG_SMP",
+      "unit": "jiffies",
+      "default": 1,
+      "range": {},
+      "summary": "per-CPU vmstat 同步到全局的间隔(jiffies);用 round_jiffies_relative 对齐到整秒,默认 HZ=1秒。缩短使 /proc/vmstat 更准但增加 per-CPU 同步开销。",
+      "increasing": {
+        "good_for": [
+          "减少 per-CPU 同步开销"
+        ],
+        "bad_for": [
+          "恶化 vmstat 读数滞后"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升 vmstat 读数时效性"
+        ],
+        "bad_for": [
+          "加剧 per-CPU 同步开销"
+        ]
+      },
+      "consumes": [
+        "mm/vmstat.c:vmstat_update",
+        "mm/vmstat.c:vmstat_shepherd"
+      ],
+      "when_to_increase": [
+        "per-CPU 同步开销大"
+      ],
+      "when_to_decrease": [
+        "vmstat 读数滞后想更准"
+      ]
+    },
+    {
+      "name": "stat_refresh",
+      "kernel_name": "vmstat_refresh",
+      "path": "/proc/sys/vm/stat_refresh",
+      "category": "tunable",
+      "gate": "CONFIG_PROC_FS CONFIG_SMP",
+      "unit": "trigger",
+      "default": 0,
+      "range": {},
+      "summary": "只写触发型 sysctl(mode 0600);echo 任意值 → schedule_on_each_cpu(refresh_vm_stats),并校验是否有负的 zone/node/event 计数(发现统计异常)。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,触发动作)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,触发动作)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/vmstat.c:vmstat_refresh"
+      ],
+      "when_to_increase": [
+        "读 vmstat 前想强制同步",
+        "怀疑统计计数异常"
+      ],
+      "when_to_decrease": []
+    },
+    {
+      "name": "numa_stat",
+      "kernel_name": "sysctl_vm_numa_stat",
+      "path": "/proc/sys/vm/numa_stat",
+      "category": "tunable",
+      "gate": "CONFIG_NUMA CONFIG_PROC_FS",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "是否开启 NUMA 统计事件(numa_hint_faults 等);关闭后清零累计计数并停止累计,减少计数开销但失去 NUMA 调平数据。",
+      "increasing": {
+        "good_for": [
+          "提供 NUMA balancing 调平数据依据"
+        ],
+        "bad_for": [
+          "增加 NUMA 故障计数开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 NUMA 计数开销"
+        ],
+        "bad_for": [
+          "失去 NUMA 调平依据"
+        ]
+      },
+      "consumes": [
+        "mm/vmstat.c:sysctl_vm_numa_stat_handler"
+      ],
+      "when_to_increase": [
+        "需 NUMA 调平数据"
+      ],
+      "when_to_decrease": [
+        "NUMA 统计开销大且无需调平"
+      ]
+    },
+    {
+      "name": "overcommit_memory",
+      "kernel_name": "sysctl_overcommit_memory",
+      "path": "/proc/sys/vm/overcommit_memory",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "enum: 0|1|2",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 2,
+        "special": {
+          "0": "OVERCOMMIT_GUESS 启发式",
+          "1": "OVERCOMMIT_ALWAYS 全允许",
+          "2": "OVERCOMMIT_NEVER 严格按 CommitLimit"
+        }
+      },
+      "summary": "overcommit 策略(0=启发式GUESS,1=ALWAYS 全允许,2=NEVER 按 CommitLimit 严格)。切到 NEVER 时同步 percpu 批次并强制 percpu_counter_sync。",
+      "increasing": {
+        "good_for": [
+          "放宽 overcommit 策略",
+          "提升大内存分配成功率"
+        ],
+        "bad_for": [
+          "加剧 OOM 风险",
+          "恶化超卖后内存回收压力"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧 CommitLimit",
+          "降低 OOM 风险"
+        ],
+        "bad_for": [
+          "加剧大内存分配被拒"
+        ]
+      },
+      "consumes": [
+        "mm/util.c:__vm_enough_memory",
+        "mm/util.c:vm_commit_limit"
+      ],
+      "when_to_increase": [
+        "大内存分配被拒想放宽"
+      ],
+      "when_to_decrease": [
+        "overcommit 风险高想收紧"
+      ]
+    },
+    {
+      "name": "overcommit_ratio",
+      "kernel_name": "sysctl_overcommit_ratio",
+      "path": "/proc/sys/vm/overcommit_ratio",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "%",
+      "default": 50,
+      "range": {},
+      "summary": "OVERCOMMIT_NEVER 下 CommitLimit = swap + (ram*ratio%)。写入会清零 sysctl_overcommit_kbytes(两者互斥)。",
+      "increasing": {
+        "good_for": [
+          "提升 CommitLimit",
+          "扩大可分配上限"
+        ],
+        "bad_for": [
+          "加剧 OOM 风险",
+          "清零 overcommit_kbytes(互斥)"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧 CommitLimit",
+          "降低 OOM 风险"
+        ],
+        "bad_for": [
+          "加剧大内存分配被拒"
+        ]
+      },
+      "consumes": [
+        "mm/util.c:vm_commit_limit",
+        "mm/util.c:overcommit_ratio_handler"
+      ],
+      "when_to_increase": [
+        "CommitLimit 不够"
+      ],
+      "when_to_decrease": [
+        "CommitLimit 太宽松"
+      ]
+    },
+    {
+      "name": "overcommit_kbytes",
+      "kernel_name": "sysctl_overcommit_kbytes",
+      "path": "/proc/sys/vm/overcommit_kbytes",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "kB",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "special": {
+          "0": "用 overcommit_ratio"
+        }
+      },
+      "summary": "OVERCOMMIT_NEVER 下用绝对 kB:CommitLimit = swap + overcommit_kbytes。>0 时覆盖 ratio;写入会清零 ratio(互斥)。",
+      "increasing": {
+        "good_for": [
+          "提升 CommitLimit 绝对值",
+          "扩大可分配上限"
+        ],
+        "bad_for": [
+          "加剧 OOM 风险",
+          "清零 overcommit_ratio(互斥)"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧 CommitLimit 绝对值"
+        ],
+        "bad_for": [
+          "加剧大内存分配被拒"
+        ]
+      },
+      "consumes": [
+        "mm/util.c:vm_commit_limit",
+        "mm/util.c:overcommit_kbytes_handler"
+      ],
+      "when_to_increase": [
+        "CommitLimit 不够想用绝对值"
+      ],
+      "when_to_decrease": [
+        "CommitLimit 太宽松"
+      ]
+    },
+    {
+      "name": "user_reserve_kbytes",
+      "kernel_name": "sysctl_user_reserve_kbytes",
+      "path": "/proc/sys/vm/user_reserve_kbytes",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "kB",
+      "default": 131072,
+      "range": {
+        "min": 0,
+        "special": {}
+      },
+      "summary": "OOM 时为用户进程(默认128MB)预留内存,避免用户进程无内存可用。与 admin_reserve 一起保证登录修复能力。",
+      "increasing": {
+        "good_for": [
+          "提升 OOM 后用户进程可用内存"
+        ],
+        "bad_for": [
+          "减少可分配内存"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "增加可分配内存"
+        ],
+        "bad_for": [
+          "加剧 OOM 后用户进程无内存可用"
+        ]
+      },
+      "consumes": [
+        "mm/util.c:sysctl_user_reserve_kbytes"
+      ],
+      "when_to_increase": [
+        "OOM 后用户进程登录修复失败"
+      ],
+      "when_to_decrease": [
+        "可分配内存紧张想多挤一点"
+      ]
+    },
+    {
+      "name": "admin_reserve_kbytes",
+      "kernel_name": "sysctl_admin_reserve_kbytes",
+      "path": "/proc/sys/vm/admin_reserve_kbytes",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "kB",
+      "default": 8192,
+      "range": {
+        "min": 0,
+        "special": {}
+      },
+      "summary": "OOM 时为 root/admin 进程(默认8MB)预留内存,保证 root 能登录修复。",
+      "increasing": {
+        "good_for": [
+          "提升 OOM 后 root 登录修复能力"
+        ],
+        "bad_for": [
+          "减少可分配内存"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "增加可分配内存"
+        ],
+        "bad_for": [
+          "加剧 OOM 后 root 无内存登录"
+        ]
+      },
+      "consumes": [
+        "mm/util.c:sysctl_admin_reserve_kbytes"
+      ],
+      "when_to_increase": [
+        "OOM 后 root 登录失败"
+      ],
+      "when_to_decrease": [
+        "可分配内存紧张想多挤一点"
+      ]
+    },
+    {
+      "name": "panic_on_oom",
+      "kernel_name": "sysctl_panic_on_oom",
+      "path": "/proc/sys/vm/panic_on_oom",
+      "category": "tunable",
+      "gate": "CONFIG_MMU CONFIG_SYSCTL",
+      "unit": "enum: 0|1|2",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 2,
+        "special": {
+          "0": "不 panic,走 OOM killer",
+          "1": "仅 CONSTRAINT_NONE 时 panic",
+          "2": "无条件 panic"
+        }
+      },
+      "summary": "OOM 时是否 panic(0=不panic,1=只 system-wide OOM panic,2=任何 OOM 都panic)。",
+      "increasing": {
+        "good_for": [
+          "提升 OOM 时 panic 倾向",
+          "便于捕获故障现场"
+        ],
+        "bad_for": [
+          "加剧服务中断"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "让 OOM killer 杀单进程后继续"
+        ],
+        "bad_for": [
+          "可能继续在故障状态运行"
+        ]
+      },
+      "consumes": [
+        "mm/oom_kill.c:check_panic_on_oom"
+      ],
+      "when_to_increase": [
+        "想 OOM 时立即 panic 捕获现场"
+      ],
+      "when_to_decrease": [
+        "想 OOM 后杀进程继续服务"
+      ]
+    },
+    {
+      "name": "oom_kill_allocating_task",
+      "kernel_name": "sysctl_oom_kill_allocating_task",
+      "path": "/proc/sys/vm/oom_kill_allocating_task",
+      "category": "tunable",
+      "gate": "CONFIG_MMU CONFIG_SYSCTL",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "OOM 时是否直接杀当前分配任务(1=杀当前,0=扫描选最坏)。非 memcg OOM 才生效。",
+      "increasing": {
+        "good_for": [
+          "加速 OOM 决策",
+          "避免扫描开销"
+        ],
+        "bad_for": [
+          "可能杀错(非最坏进程)",
+          "恶化进程选择合理性"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "按 badness 选最坏进程杀"
+        ],
+        "bad_for": [
+          "增加 OOM 扫描开销"
+        ]
+      },
+      "consumes": [
+        "mm/oom_kill.c:out_of_memory"
+      ],
+      "when_to_increase": [
+        "想 OOM 时快速决策杀当前分配者"
+      ],
+      "when_to_decrease": [
+        "想 OOM 时按 badness 选最坏进程杀"
+      ]
+    },
+    {
+      "name": "oom_dump_tasks",
+      "kernel_name": "sysctl_oom_dump_tasks",
+      "path": "/proc/sys/vm/oom_dump_tasks",
+      "category": "tunable",
+      "gate": "CONFIG_MMU CONFIG_SYSCTL",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "OOM 时是否 dump 所有任务内存信息(0=否,1=是,默认1);辅助排查但产生大量日志。",
+      "increasing": {
+        "good_for": [
+          "提升 OOM 现场信息完整度"
+        ],
+        "bad_for": [
+          "加剧日志量",
+          "恶化 OOM 时 IO 压力"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "精简 OOM 日志"
+        ],
+        "bad_for": [
+          "减少 OOM 现场信息"
+        ]
+      },
+      "consumes": [
+        "mm/oom_kill.c:dump_header"
+      ],
+      "when_to_increase": [
+        "OOM 现场信息不全"
+      ],
+      "when_to_decrease": [
+        "OOM 日志量过大"
+      ]
+    },
+    {
+      "name": "max_map_count",
+      "kernel_name": "sysctl_max_map_count",
+      "path": "/proc/sys/vm/max_map_count",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "count",
+      "default": 65530,
+      "range": {
+        "min": 0,
+        "special": {}
+      },
+      "summary": "单进程最大 VMA 数量(默认 USHRT_MAX-5=65530)。mmap/brk 超过返回 ENOMEM。",
+      "increasing": {
+        "good_for": [
+          "允许更多 VMA",
+          "支持大数据/多库程序"
+        ],
+        "bad_for": [
+          "加剧 VMA 元数据内存占用"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 VMA 元数据开销"
+        ],
+        "bad_for": [
+          "加剧 VMA 数受限的程序失败"
+        ]
+      },
+      "consumes": [
+        "mm/mmap.c:mmap_region"
+      ],
+      "when_to_increase": [
+        "进程 VMA 数超限报 ENOMEM"
+      ],
+      "when_to_decrease": [
+        "VMA 元数据内存占用大"
+      ]
+    },
+    {
+      "name": "legacy_va_layout",
+      "kernel_name": "sysctl_legacy_va_layout",
+      "path": "/proc/sys/vm/legacy_va_layout",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "是否用旧式地址布局(无 ASLR)。依赖 HAVE_ARCH_PICK_MMAP_LAYOUT 或 CONFIG_ARCH_WANT_DEFAULT_TOPDOWN_MMAP_LAYOUT,无则条目不存在。",
+      "increasing": {
+        "good_for": [
+          "启用旧式地址布局",
+          "兼容老二进制"
+        ],
+        "bad_for": [
+          "失去 ASLR 安全性"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "启用现代 ASLR 布局"
+        ],
+        "bad_for": [
+          "可能 break 老二进制"
+        ]
+      },
+      "consumes": [
+        "arch/arm64/mm/mmap.c:arch_pick_mmap_layout"
+      ],
+      "when_to_increase": [
+        "老二进制需旧式地址布局"
+      ],
+      "when_to_decrease": [
+        "想用现代 ASLR 布局"
+      ]
+    },
+    {
+      "name": "mmap_rnd_bits",
+      "kernel_name": "mmap_rnd_bits",
+      "path": "/proc/sys/vm/mmap_rnd_bits",
+      "category": "tunable",
+      "gate": "CONFIG_HAVE_ARCH_MMAP_RND_BITS CONFIG_SYSCTL",
+      "unit": "bits",
+      "default": 28,
+      "range": {
+        "min": "CONFIG_ARCH_MMAP_RND_BITS_MIN",
+        "max": "CONFIG_ARCH_MMAP_RND_BITS_MAX"
+      },
+      "summary": "mmap 随机化位数,默认=CONFIG_ARCH_MMAP_RND_BITS,范围[min,max]由 arch 决定。改值生效需新进程。",
+      "increasing": {
+        "good_for": [
+          "提升 mmap ASLR 强度"
+        ],
+        "bad_for": [
+          "加剧地址空间碎片化"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧地址空间布局"
+        ],
+        "bad_for": [
+          "减弱 ASLR 安全性"
+        ]
+      },
+      "consumes": [
+        "arch/arm64/mm/mmap.c:arch_mmap_rnd_bits"
+      ],
+      "when_to_increase": [
+        "ASLR 强度不够"
+      ],
+      "when_to_decrease": [
+        "地址空间碎片化"
+      ]
+    },
+    {
+      "name": "mmap_rnd_compat_bits",
+      "kernel_name": "mmap_rnd_compat_bits",
+      "path": "/proc/sys/vm/mmap_rnd_compat_bits",
+      "category": "tunable",
+      "gate": "CONFIG_HAVE_ARCH_MMAP_RND_COMPAT_BITS CONFIG_SYSCTL",
+      "unit": "bits",
+      "default": 8,
+      "range": {
+        "min": "CONFIG_ARCH_MMAP_RND_COMPAT_BITS_MIN",
+        "max": "CONFIG_ARCH_MMAP_RND_COMPAT_BITS_MAX"
+      },
+      "summary": "兼容(32位)进程 mmap 随机化位数,默认=CONFIG_ARCH_MMAP_RND_COMPAT_BITS,范围由 arch 决定。",
+      "increasing": {
+        "good_for": [
+          "提升 compat 进程 ASLR 强度"
+        ],
+        "bad_for": [
+          "加剧 compat 地址空间碎片"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧 compat 地址布局"
+        ],
+        "bad_for": [
+          "减弱 compat ASLR 安全性"
+        ]
+      },
+      "consumes": [
+        "arch/arm64/mm/mmap.c:arch_mmap_rnd_compat_bits"
+      ],
+      "when_to_increase": [
+        "compat 进程 ASLR 强度不够"
+      ],
+      "when_to_decrease": [
+        "compat 地址空间碎片化"
+      ]
+    },
+    {
+      "name": "page-cluster",
+      "kernel_name": "page_cluster",
+      "path": "/proc/sys/vm/page-cluster",
+      "category": "tunable",
+      "gate": "",
+      "unit": "pages",
+      "default": 3,
+      "range": {
+        "min": 0,
+        "max": 31,
+        "special": {
+          "0": "禁用 swapin 预读"
+        }
+      },
+      "summary": "swapin 预读页数 = 2^page_cluster。swap_setup 中 <16MB 设2,否则设3。",
+      "increasing": {
+        "good_for": [
+          "扩大 swapin 预读页数",
+          "减少 swapin IO 次数"
+        ],
+        "bad_for": [
+          "加剧预读内存占用"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "精简 swapin 预读"
+        ],
+        "bad_for": [
+          "加剧 swapin IO 次数"
+        ]
+      },
+      "consumes": [
+        "mm/swap_state.c:swap_cluster_readahead"
+      ],
+      "when_to_increase": [
+        "swapin 顺序性差 IO 次数多"
+      ],
+      "when_to_decrease": [
+        "预读浪费内存"
+      ]
+    },
+    {
+      "name": "nr_hugepages",
+      "kernel_name": "hugetlb_sysctl_handler",
+      "path": "/proc/sys/vm/nr_hugepages",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "pages",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "special": {}
+      },
+      "summary": "默认 hstate(2MB 页 on x86)的持久 hugepage 数。写入触发 alloc/free 以匹配新值。",
+      "increasing": {
+        "good_for": [
+          "扩大持久 hugepage 池",
+          "提升大页应用稳定性"
+        ],
+        "bad_for": [
+          "占用更多不可用于普通分配的 RAM"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "释放 RAM 给普通分配"
+        ],
+        "bad_for": [
+          "加剧大页应用 OOM 风险"
+        ]
+      },
+      "consumes": [
+        "mm/hugetlb.c:__nr_hugepages_store_common"
+      ],
+      "when_to_increase": [
+        "大页应用 OOM 池不足"
+      ],
+      "when_to_decrease": [
+        "大页占用 RAM 太多"
+      ]
+    },
+    {
+      "name": "nr_hugepages_mempolicy",
+      "kernel_name": "hugetlb_mempolicy_sysctl_handler",
+      "path": "/proc/sys/vm/nr_hugepages_mempolicy",
+      "category": "tunable",
+      "gate": "CONFIG_NUMA CONFIG_SYSCTL",
+      "unit": "pages",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "special": {}
+      },
+      "summary": "按当前 task 的 mempolicy(MPOL_BIND/MPOL_INTERLEAVE nodemask)调整 hugepage 数,语义同 nr_hugepages 但限定到指定 nodes。",
+      "increasing": {
+        "good_for": [
+          "按 mempolicy 扩大指定 node 大页池"
+        ],
+        "bad_for": [
+          "占用指定 node 更多 RAM"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "释放指定 node RAM"
+        ],
+        "bad_for": [
+          "加剧指定 node 大页应用 OOM"
+        ]
+      },
+      "consumes": [
+        "mm/hugetlb_sysctl.c:hugetlb_sysctl_handler_common"
+      ],
+      "when_to_increase": [
+        "某 node 大页不足"
+      ],
+      "when_to_decrease": [
+        "某 node 大页占用多"
+      ]
+    },
+    {
+      "name": "hugetlb_shm_group",
+      "kernel_name": "sysctl_hugetlb_shm_group",
+      "path": "/proc/sys/vm/hugetlb_shm_group",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "gid",
+      "default": 0,
+      "range": {},
+      "summary": "允许使用 SHM_HUGETLB 的 gid(默认0=root组);改组授权特定组用大页共享内存。",
+      "increasing": {
+        "good_for": [
+          "(无单调性)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "fs/hugetlbfs/inode.c:hugetlb_file_setup"
+      ],
+      "when_to_increase": [
+        "想授权更多组用 SHM_HUGETLB"
+      ],
+      "when_to_decrease": [
+        "想收回某组 SHM_HUGETLB 权限"
+      ]
+    },
+    {
+      "name": "nr_overcommit_hugepages",
+      "kernel_name": "hugetlb_overcommit_handler",
+      "path": "/proc/sys/vm/nr_overcommit_hugepages",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "pages",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "special": {}
+      },
+      "summary": "可超额分配的 hugepage 上限。超出持久 pool 后从 surplus pool 借;OOM 风险大,运行时收缩。",
+      "increasing": {
+        "good_for": [
+          "扩大 surplus 池",
+          "提升大页峰值可用性"
+        ],
+        "bad_for": [
+          "加剧 surplus 借用导致的 OOM 风险"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧 surplus 池",
+          "降低 OOM 风险"
+        ],
+        "bad_for": [
+          "加剧大页峰值应用 OOM"
+        ]
+      },
+      "consumes": [
+        "mm/hugetlb.c:set_max_huge_pages"
+      ],
+      "when_to_increase": [
+        "大页应用偶发峰值超持久池"
+      ],
+      "when_to_decrease": [
+        "surplus 池 OOM 风险高"
+      ]
+    },
+    {
+      "name": "movable_gigantic_pages",
+      "kernel_name": "movable_gigantic_pages",
+      "path": "/proc/sys/vm/movable_gigantic_pages",
+      "category": "tunable",
+      "gate": "CONFIG_ARCH_ENABLE_HUGEPAGE_MIGRATION CONFIG_SYSCTL",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "是否允许 gigantic(>MAX_ORDER) 页迁移。默认0;开启需 arch 支持 CONFIG_ARCH_ENABLE_HUGEPAGE_MIGRATION。用于内存隔离/CMA迁移。",
+      "increasing": {
+        "good_for": [
+          "允许 gigantic 页迁移",
+          "支持内存隔离/CMA"
+        ],
+        "bad_for": [
+          "加剧巨型页迁移开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "固定 gigantic 页减少迁移开销"
+        ],
+        "bad_for": [
+          "无法迁移 gigantic 页用于隔离"
+        ]
+      },
+      "consumes": [
+        "include/linux/hugetlb.h:hstate_is_gigantic"
+      ],
+      "when_to_increase": [
+        "需迁移 gigantic 页做内存隔离/CMA"
+      ],
+      "when_to_decrease": [
+        "gigantic 页迁移开销大想固定"
+      ]
+    },
+    {
+      "name": "hugetlb_optimize_vmemmap",
+      "kernel_name": "vmemmap_optimize_enabled",
+      "path": "/proc/sys/vm/hugetlb_optimize_vmemmap",
+      "category": "tunable",
+      "gate": "CONFIG_HUGETLB_PAGE_OPTIMIZE_VMEMMAP",
+      "unit": "bool",
+      "default": false,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "HugeTLB vmemmap 优化开关:把 tail page struct 复用进 head page,节省 struct page 内存。默认=CONFIG_HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON;可早参 hugetlb_free_vmemmap= 覆盖。运行时改只对后续 alloc 生效。",
+      "increasing": {
+        "good_for": [
+          "节省大页 tail page 的 struct page 内存"
+        ],
+        "bad_for": [
+          "只对后续 alloc 生效(老页不变)"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "恢复标准 struct page 布局"
+        ],
+        "bad_for": [
+          "加剧大页元数据内存开销"
+        ]
+      },
+      "consumes": [
+        "mm/hugetlb_vmemmap.c:hugetlb_vmemmap_restore",
+        "mm/hugetlb_vmemmap.c:hugetlb_vmemmap_alloc"
+      ],
+      "when_to_increase": [
+        "大页 struct page 内存开销大"
+      ],
+      "when_to_decrease": [
+        "想恢复标准 struct page 布局"
+      ]
+    },
+    {
+      "name": "page_lock_unfairness",
+      "kernel_name": "sysctl_page_lock_unfairness",
+      "path": "/proc/sys/vm/page_lock_unfairness",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 5,
+      "range": {
+        "min": 0,
+        "special": {
+          "0": "禁用偷锁,严格 FIFO"
+        }
+      },
+      "summary": "folio lock 被偷(steal)次数阈值。等待者每 unfairness 次唤醒里有一次排队而非偷锁,平衡吞吐(steal)与公平(FIFO)。",
+      "increasing": {
+        "good_for": [
+          "提升偷锁倾向",
+          "增加锁吞吐"
+        ],
+        "bad_for": [
+          "加剧等待者饥饿"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升 FIFO 公平性"
+        ],
+        "bad_for": [
+          "降低锁吞吐"
+        ]
+      },
+      "consumes": [
+        "mm/filemap.c:folio_wait_bit_common"
+      ],
+      "when_to_increase": [
+        "folio lock 等待者吞吐瓶颈"
+      ],
+      "when_to_decrease": [
+        "folio lock 等待者饥饿"
+      ]
+    },
+    {
+      "name": "dirty_background_ratio",
+      "kernel_name": "dirty_background_ratio",
+      "path": "/proc/sys/vm/dirty_background_ratio",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "%",
+      "default": 10,
+      "range": {
+        "min": 0,
+        "max": 100,
+        "special": {}
+      },
+      "summary": "脏页超 dirtyable*ratio% 时启动后台回写(writeback 线程)。与 dirty_background_bytes 互斥,写入清零 bytes。",
+      "increasing": {
+        "good_for": [
+          "扩大脏页累积才触发回写",
+          "减少回写抖动"
+        ],
+        "bad_for": [
+          "加剧突发回写量",
+          "清零 dirty_background_bytes(互斥)"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提早触发后台回写",
+          "降低脏页峰值"
+        ],
+        "bad_for": [
+          "加剧回写频率",
+          "增加 IO 抖动"
+        ]
+      },
+      "consumes": [
+        "mm/page-writeback.c:global_dirty_limits",
+        "mm/page-writeback.c:dirty_background_ratio_handler"
+      ],
+      "when_to_increase": [
+        "回写抖动多想攒批"
+      ],
+      "when_to_decrease": [
+        "脏页峰值高想早回写"
+      ]
+    },
+    {
+      "name": "dirty_background_bytes",
+      "kernel_name": "dirty_background_bytes",
+      "path": "/proc/sys/vm/dirty_background_bytes",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "bytes",
+      "default": 0,
+      "range": {
+        "min": 1,
+        "special": {
+          "0": "用 dirty_background_ratio"
+        }
+      },
+      "summary": "脏页超此绝对字节时启动后台回写。>0 覆盖 ratio;写入清零 ratio。需 background_bytes/PAGE_SIZE <= UINT_MAX。",
+      "increasing": {
+        "good_for": [
+          "扩大脏页字节累积才回写"
+        ],
+        "bad_for": [
+          "加剧脏页峰值",
+          "清零 dirty_background_ratio(互斥)"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提早触发回写"
+        ],
+        "bad_for": [
+          "加剧 IO 频率"
+        ]
+      },
+      "consumes": [
+        "mm/page-writeback.c:global_dirty_limits",
+        "mm/page-writeback.c:dirty_background_bytes_handler"
+      ],
+      "when_to_increase": [
+        "回写抖动多想攒批"
+      ],
+      "when_to_decrease": [
+        "脏页峰值高想早回写"
+      ]
+    },
+    {
+      "name": "dirty_ratio",
+      "kernel_name": "vm_dirty_ratio",
+      "path": "/proc/sys/vm/dirty_ratio",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "%",
+      "default": 20,
+      "range": {
+        "min": 0,
+        "max": 100,
+        "special": {}
+      },
+      "summary": "脏页超 dirtyable*ratio% 时产生脏页的进程被阻塞回写(throttle)。与 dirty_bytes 互斥。",
+      "increasing": {
+        "good_for": [
+          "提升写者吞吐",
+          "扩大脏页缓冲"
+        ],
+        "bad_for": [
+          "加剧 OOM 风险",
+          "恶化突发回写延迟"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "降低脏页峰值",
+          "降低 OOM 风险"
+        ],
+        "bad_for": [
+          "降低写者吞吐"
+        ]
+      },
+      "consumes": [
+        "mm/page-writeback.c:global_dirty_limits",
+        "mm/page-writeback.c:dirty_ratio_handler"
+      ],
+      "when_to_increase": [
+        "写者吞吐瓶颈脏页缓冲不够",
+        "回写带宽充足可容更多脏页"
+      ],
+      "when_to_decrease": [
+        "脏页堆积 OOM 风险高",
+        "写者被 throttle 想降低脏页峰值"
+      ]
+    },
+    {
+      "name": "dirty_bytes",
+      "kernel_name": "vm_dirty_bytes",
+      "path": "/proc/sys/vm/dirty_bytes",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "bytes",
+      "default": 0,
+      "range": {
+        "min": 8192,
+        "special": {
+          "0": "用 dirty_ratio"
+        }
+      },
+      "summary": "脏页超此绝对字节时阻塞写者。>0 覆盖 ratio;最小 2*PAGE_SIZE。写入清零 ratio。",
+      "increasing": {
+        "good_for": [
+          "扩大脏页字节缓冲",
+          "提升写者吞吐"
+        ],
+        "bad_for": [
+          "加剧 OOM 风险",
+          "清零 vm_dirty_ratio(互斥)"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "降低脏页峰值",
+          "降低 OOM 风险"
+        ],
+        "bad_for": [
+          "降低写者吞吐"
+        ]
+      },
+      "consumes": [
+        "mm/page-writeback.c:global_dirty_limits",
+        "mm/page-writeback.c:dirty_bytes_handler"
+      ],
+      "when_to_increase": [
+        "写者吞吐瓶颈想扩脏页缓冲"
+      ],
+      "when_to_decrease": [
+        "脏页堆积 OOM 风险高"
+      ]
+    },
+    {
+      "name": "dirty_writeback_centisecs",
+      "kernel_name": "dirty_writeback_interval",
+      "path": "/proc/sys/vm/dirty_writeback_centisecs",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "centisec",
+      "default": 500,
+      "range": {},
+      "summary": "周期性回写间隔(centisec,默认500=5秒)。写0禁用周期回写;改值会 mod_timer 重启 wb timer。",
+      "increasing": {
+        "good_for": [
+          "降低回写频率",
+          "减少 IO 抖动"
+        ],
+        "bad_for": [
+          "加剧脏页滞留时长",
+          "恶化崩溃丢数据风险"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "加速脏页回写",
+          "降低丢数据风险"
+        ],
+        "bad_for": [
+          "加剧 IO 频率"
+        ]
+      },
+      "consumes": [
+        "mm/page-writeback.c:dirty_writeback_centisecs_handler"
+      ],
+      "when_to_increase": [
+        "回写抖动多想拉长周期"
+      ],
+      "when_to_decrease": [
+        "脏页滞留久想更及时回写"
+      ]
+    },
+    {
+      "name": "dirty_expire_centisecs",
+      "kernel_name": "dirty_expire_interval",
+      "path": "/proc/sys/vm/dirty_expire_centisecs",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "centisec",
+      "default": 3000,
+      "range": {
+        "min": 0,
+        "special": {}
+      },
+      "summary": "脏页过期时间(centisec,默认3000=30秒)。超龄脏页在下次回写周期被优先写出。",
+      "increasing": {
+        "good_for": [
+          "延长脏页留栈时间",
+          "减少 IO 突发"
+        ],
+        "bad_for": [
+          "加剧崩溃丢数据风险"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "加速数据落盘"
+        ],
+        "bad_for": [
+          "加剧 IO 频率"
+        ]
+      },
+      "consumes": [
+        "mm/page-writeback.c:wb_io_ends_when_dirt_expires"
+      ],
+      "when_to_increase": [
+        "想延长脏页留栈时间攒批"
+      ],
+      "when_to_decrease": [
+        "数据及时落盘要求高"
+      ]
+    },
+    {
+      "name": "highmem_is_dirtyable",
+      "kernel_name": "vm_highmem_is_dirtyable",
+      "path": "/proc/sys/vm/highmem_is_dirtyable",
+      "category": "tunable",
+      "gate": "CONFIG_HIGHMEM CONFIG_SYSCTL",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "HIGHMEM 是否计入 dirtyable 基数(0=只 lowmem,1=highmem 也算)。仅 CONFIG_HIGHMEM arch 有意义。",
+      "increasing": {
+        "good_for": [
+          "扩大 dirtyable 基数",
+          "提升写者不阻塞倾向"
+        ],
+        "bad_for": [
+          "加剧 HIGHMEM 脏页回收难度"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧 dirtyable 到 lowmem",
+          "提升回收稳定性"
+        ],
+        "bad_for": [
+          "减少 dirtyable 基数"
+        ]
+      },
+      "consumes": [
+        "mm/page-writeback.c:global_dirty_limits"
+      ],
+      "when_to_increase": [
+        "HIGHMEM 机器 dirtyable 不够"
+      ],
+      "when_to_decrease": [
+        "HIGHMEM 脏页难回收"
+      ]
+    },
+    {
+      "name": "laptop_mode",
+      "kernel_name": "laptop_mode",
+      "path": "/proc/sys/vm/laptop_mode",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "deprecated",
+      "deprecated": true,
+      "default": 0,
+      "range": {},
+      "summary": "已废弃。laptop_mode_handler 仅 pr_warn('vm.laptop_mode is deprecated. Ignoring setting.') 后返回,不产生任何效果。保留以兼容旧脚本。",
+      "increasing": {
+        "good_for": [
+          "(已废弃,改无效)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(已废弃,改无效)"
+        ],
+        "bad_for": []
+      },
+      "version_notes": "未确认: laptop_mode_handler 仅打 pr_warn,实际 laptop 模式行为需要其他子系统(如 block)参与;v7.1.0-rc5 中此 sysctl 已无功能",
+      "when_to_increase": [],
+      "when_to_decrease": []
+    },
+    {
+      "name": "memory_failure_early_kill",
+      "kernel_name": "sysctl_memory_failure_early_kill",
+      "path": "/proc/sys/vm/memory_failure_early_kill",
+      "category": "tunable",
+      "gate": "CONFIG_MEMORY_FAILURE",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "硬件故障页(hwpoison)是否对所有进程提前 SIGBUS(1=尽早对所有进程,0=仅给映射该页且需 SIGBUS 的进程)。",
+      "increasing": {
+        "good_for": [
+          "提早对故障页进程发 SIGBUS",
+          "避免错误数据扩散"
+        ],
+        "bad_for": [
+          "加剧误杀非问题进程"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "只杀确实使用故障页的进程"
+        ],
+        "bad_for": [
+          "恶化故障数据扩散风险"
+        ]
+      },
+      "consumes": [
+        "mm/memory-failure.c:find_early_kill_thread"
+      ],
+      "when_to_increase": [
+        "故障页数据扩散风险高"
+      ],
+      "when_to_decrease": [
+        "误杀进程多"
+      ]
+    },
+    {
+      "name": "memory_failure_recovery",
+      "kernel_name": "sysctl_memory_failure_recovery",
+      "path": "/proc/sys/vm/memory_failure_recovery",
+      "category": "tunable",
+      "gate": "CONFIG_MEMORY_FAILURE",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "硬件故障页是否尝试恢复(0=直接 panic,1=尝试隔离/恢复,默认1)。",
+      "increasing": {
+        "good_for": [
+          "启用故障页隔离恢复",
+          "维持系统运行"
+        ],
+        "bad_for": [
+          "恶化潜在数据风险"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "立即 panic 便于捕获现场"
+        ],
+        "bad_for": [
+          "导致系统直接宕机"
+        ]
+      },
+      "consumes": [
+        "mm/memory-failure.c:memory_failure"
+      ],
+      "when_to_increase": [
+        "想故障时系统继续运行"
+      ],
+      "when_to_decrease": [
+        "想故障时立即 panic 便于排查"
+      ]
+    },
+    {
+      "name": "enable_soft_offline",
+      "kernel_name": "sysctl_enable_soft_offline",
+      "path": "/proc/sys/vm/enable_soft_offline",
+      "category": "tunable",
+      "gate": "CONFIG_MEMORY_FAILURE",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "是否允许 soft off-line 故障页(0=禁用,1=允许,默认1)。soft off-line 把页迁移而非隔离整页,系统继续运行。",
+      "increasing": {
+        "good_for": [
+          "允许 soft off-line 迁移故障页",
+          "维持系统运行"
+        ],
+        "bad_for": [
+          "加剧迁移开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "禁用 soft off-line,改用 hard"
+        ],
+        "bad_for": [
+          "必须 hard offline 故障页"
+        ]
+      },
+      "consumes": [
+        "mm/memory-failure.c:soft_offline_page"
+      ],
+      "when_to_increase": [
+        "想软隔离故障页不中断"
+      ],
+      "when_to_decrease": [
+        "想强制 hard offline 故障页"
+      ]
+    },
+    {
+      "name": "randomize_va_space",
+      "kernel_name": "randomize_va_space",
+      "path": "/proc/sys/kernel/randomize_va_space",
+      "category": "tunable",
+      "gate": "",
+      "unit": "enum: 0|1|2",
+      "default": 2,
+      "range": {
+        "special": {
+          "0": "关闭随机化",
+          "1": "mmap/stack 随机",
+          "2": "+brk 随机(默认)"
+        }
+      },
+      "summary": "进程地址空间随机化级别(0=关,1=共享库/mmap 随机,2=+brk 随机,默认2;CONFIG_COMPAT_BRK 时默认1)。",
+      "increasing": {
+        "good_for": [
+          "提升 ASLR 强度",
+          "扩大随机化范围"
+        ],
+        "bad_for": [
+          "加剧地址空间碎片化"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧地址空间布局"
+        ],
+        "bad_for": [
+          "减弱 ASLR 安全性"
+        ]
+      },
+      "consumes": [
+        "arch/arm64/mm/mmap.c:arch_pick_mmap_layout",
+        "mm/mmap.c:expand_stack"
+      ],
+      "when_to_increase": [
+        "ASLR 强度不够"
+      ],
+      "when_to_decrease": [
+        "兼容老二进制或调试需固定地址"
+      ]
+    },
+    {
+      "name": "peak",
+      "kernel_name": "memory_peak_write",
+      "path": "/sys/fs/cgroup/memory.<name>/peak",
+      "category": "tunable",
+      "gate": "CONFIG_MEMCG",
+      "unit": "trigger",
+      "default": 0,
+      "range": {},
+      "summary": "cgroup memory 峰值追踪。读返回自上次重置以来 memory.current 的最大值;写任意值重置。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,触发)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,触发)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/memcontrol.c:peak_write"
+      ],
+      "version_notes": "cftype .write = memory_peak_write,seq_show = memory_peak_show;实际上 peak_show 是共用回调",
+      "when_to_increase": [
+        "想重置 memory.peak 峰值统计"
+      ],
+      "when_to_decrease": [
+        "(只触发,无方向)"
+      ]
+    },
+    {
+      "name": "min",
+      "kernel_name": "memory_min_write",
+      "path": "/sys/fs/cgroup/memory.<name>/min",
+      "category": "tunable",
+      "gate": "CONFIG_MEMCG",
+      "unit": "bytes",
+      "default": 0,
+      "range": {
+        "special": {
+          "max": "ULLONG_MAX 不限"
+        }
+      },
+      "summary": "cgroup memory.min 软下限(page_count,可写 'max' = ULLONG_MAX)。回收时承诺尽量不占这部分。",
+      "increasing": {
+        "good_for": [
+          "提升子组软下限保护",
+          "减少回收时占用子组内存"
+        ],
+        "bad_for": [
+          "恶化父组可回收内存余量"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "扩大父组可回收内存"
+        ],
+        "bad_for": [
+          "减弱子组保护,易被回收"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:memory_min_write",
+        "mm/page_counter.c:page_counter_set_min"
+      ],
+      "when_to_increase": [
+        "子组内存保护不足"
+      ],
+      "when_to_decrease": [
+        "父组可回收内存少"
+      ]
+    },
+    {
+      "name": "low",
+      "kernel_name": "memory_low_write",
+      "path": "/sys/fs/cgroup/memory.<name>/low",
+      "category": "tunable",
+      "gate": "CONFIG_MEMCG",
+      "unit": "bytes",
+      "default": 0,
+      "range": {
+        "special": {
+          "max": "ULLONG_MAX 不限"
+        }
+      },
+      "summary": "cgroup memory.low 软下限。比 min 弱:只在父级有余地时保护子组(优先回收低于 low 的兄弟)。",
+      "increasing": {
+        "good_for": [
+          "提升子组 low 软保护"
+        ],
+        "bad_for": [
+          "减少父组回收余地"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "扩大父组回收余地"
+        ],
+        "bad_for": [
+          "减弱子组 low 保护"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:memory_low_write",
+        "mm/page_counter.c:page_counter_set_low"
+      ],
+      "when_to_increase": [
+        "子组软保护不足但 min 太严"
+      ],
+      "when_to_decrease": [
+        "父组回收余地不足"
+      ]
+    },
+    {
+      "name": "high",
+      "kernel_name": "memory_high_write",
+      "path": "/sys/fs/cgroup/memory.<name>/high",
+      "category": "tunable",
+      "gate": "CONFIG_MEMCG",
+      "unit": "bytes",
+      "default": "max",
+      "range": {
+        "special": {
+          "max": "ULLONG_MAX 不限"
+        }
+      },
+      "summary": "cgroup memory.high 上限。超过会同步回收该组内存直至回到 high;O_NONBLOCK 时跳过回收。",
+      "increasing": {
+        "good_for": [
+          "放宽组内存软上限",
+          "减少同步回收干扰"
+        ],
+        "bad_for": [
+          "挤占系统或其他组内存",
+          "易逼近 max 触发 OOM"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧组内存软上限",
+          "更早触发同步回收"
+        ],
+        "bad_for": [
+          "加剧组内分配被回收压力"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:memory_high_write",
+        "mm/vmscan.c:try_to_free_mem_cgroup_pages"
+      ],
+      "when_to_increase": [
+        "组同步回收太频繁想放宽",
+        "组内存上限太紧常触 high"
+      ],
+      "when_to_decrease": [
+        "组内存占用失控想收紧",
+        "想更早触发同步回收限制组"
+      ]
+    },
+    {
+      "name": "max",
+      "kernel_name": "memory_max_write",
+      "path": "/sys/fs/cgroup/memory.<name>/max",
+      "category": "tunable",
+      "gate": "CONFIG_MEMCG",
+      "unit": "bytes",
+      "default": "max",
+      "range": {
+        "special": {
+          "max": "ULLONG_MAX 不限"
+        }
+      },
+      "summary": "cgroup memory.max 硬上限。超过触发 OOM(回收失败后调用 mem_cgroup_out_of_memory)。",
+      "increasing": {
+        "good_for": [
+          "提升组内存上限"
+        ],
+        "bad_for": [
+          "挤占系统或其他组内存",
+          "可能掩盖内存泄漏"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧组内存隔离",
+          "降低组 OOM 影响"
+        ],
+        "bad_for": [
+          "加剧组内分配 OOM"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:memory_max_write",
+        "mm/oom_kill.c:mem_cgroup_out_of_memory"
+      ],
+      "when_to_increase": [
+        "组内存上限不够致 OOM",
+        "组工作负载需更多内存"
+      ],
+      "when_to_decrease": [
+        "想收紧组内存隔离",
+        "组占内存过多"
+      ]
+    },
+    {
+      "name": "oom.group",
+      "kernel_name": "memory_oom_group_write",
+      "path": "/sys/fs/cgroup/memory.<name>/oom.group",
+      "category": "tunable",
+      "gate": "CONFIG_MEMCG",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "cgroup oom.group(0/1)。1=OOM 时整组一起杀而非单进程,适合批处理隔离。",
+      "increasing": {
+        "good_for": [
+          "启用整组 OOM 杀",
+          "保障批处理一致性"
+        ],
+        "bad_for": [
+          "误杀同组其他进程"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "OOM 时只杀最坏进程"
+        ],
+        "bad_for": [
+          "减弱组隔离一致性"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:memory_oom_group_write"
+      ],
+      "when_to_increase": [
+        "批处理组隔离一致性要求高"
+      ],
+      "when_to_decrease": [
+        "想 OOM 时只杀最坏进程"
+      ]
+    },
+    {
+      "name": "reclaim",
+      "kernel_name": "memory_reclaim",
+      "path": "/sys/fs/cgroup/memory.<name>/reclaim",
+      "category": "tunable",
+      "gate": "CONFIG_MEMCG",
+      "unit": "trigger",
+      "default": 0,
+      "range": {},
+      "summary": "只写触发型,echo <bytes> 让该 cgroup 主动回收指定字节数(user_proactive_reclaim)。用于压力测试与人工回收。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,触发动作)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,触发动作)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/memcontrol.c:user_proactive_reclaim"
+      ],
+      "when_to_increase": [
+        "组内存紧张想主动回收",
+        "压力测试想触发回收"
+      ],
+      "when_to_decrease": []
+    },
+    {
+      "name": "swap.high",
+      "kernel_name": "swap_high_write",
+      "path": "/sys/fs/cgroup/memory.<name>/swap.high",
+      "category": "tunable",
+      "gate": "CONFIG_SWAP",
+      "unit": "bytes",
+      "default": "max",
+      "range": {
+        "special": {
+          "max": "ULLONG_MAX 不限"
+        }
+      },
+      "summary": "cgroup swap.high 软上限。超过会限速而非直接 OOM。",
+      "increasing": {
+        "good_for": [
+          "放宽组 swap 软上限",
+          "提升组 swap 写速度"
+        ],
+        "bad_for": [
+          "挤占系统 swap 资源",
+          "加剧组 swap 用量"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧组 swap 软上限",
+          "更早触发 swap 限速"
+        ],
+        "bad_for": [
+          "限制组内 swap 写速度"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:swap_high_write"
+      ],
+      "when_to_increase": [
+        "组 swap 限速太严"
+      ],
+      "when_to_decrease": [
+        "组 swap 用量过高"
+      ]
+    },
+    {
+      "name": "swap.max",
+      "kernel_name": "swap_max_write",
+      "path": "/sys/fs/cgroup/memory.<name>/swap.max",
+      "category": "tunable",
+      "gate": "CONFIG_SWAP",
+      "unit": "bytes",
+      "default": "max",
+      "range": {
+        "special": {
+          "max": "ULLONG_MAX 不限"
+        }
+      },
+      "summary": "cgroup swap.max 硬上限。超过则拒绝 swap 写,可能触发 OOM。",
+      "increasing": {
+        "good_for": [
+          "扩大组 swap 硬上限",
+          "允许更多 swap"
+        ],
+        "bad_for": [
+          "挤占系统 swap 资源",
+          "可能掩盖内存泄漏"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧组 swap 硬上限"
+        ],
+        "bad_for": [
+          "加剧组 swap 写被拒,易触 OOM"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:swap_max_write"
+      ],
+      "when_to_increase": [
+        "组 swap 配额不够"
+      ],
+      "when_to_decrease": [
+        "组 swap 滥用"
+      ]
+    },
+    {
+      "name": "swap.peak",
+      "kernel_name": "swap_peak_write",
+      "path": "/sys/fs/cgroup/memory.<name>/swap.peak",
+      "category": "tunable",
+      "gate": "CONFIG_SWAP",
+      "unit": "trigger",
+      "default": 0,
+      "range": {},
+      "summary": "cgroup swap 峰值追踪。读返回自上次重置以来 swap.current 的最大值;写任意值重置。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,触发)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,触发)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/memcontrol.c:peak_write"
+      ],
+      "when_to_increase": [
+        "想重置 swap.peak 峰值统计"
+      ],
+      "when_to_decrease": [
+        "(只触发,无方向)"
+      ]
+    },
+    {
+      "name": "zswap.max",
+      "kernel_name": "zswap_max_write",
+      "path": "/sys/fs/cgroup/memory.<name>/zswap.max",
+      "category": "tunable",
+      "gate": "CONFIG_SWAP CONFIG_ZSWAP",
+      "unit": "bytes",
+      "default": "max",
+      "range": {
+        "special": {
+          "max": "ULLONG_MAX 不限"
+        }
+      },
+      "summary": "cgroup zswap.max 上限。超过则 zswap 写回 swap 而非继续压缩。",
+      "increasing": {
+        "good_for": [
+          "扩大 zswap 压缩池上限",
+          "减少回写 swap"
+        ],
+        "bad_for": [
+          "挤占系统内存用于 zswap 压缩池"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 zswap 内存占用"
+        ],
+        "bad_for": [
+          "加剧更早回写 swap",
+          "增加 swap IO"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:zswap_max_write"
+      ],
+      "when_to_increase": [
+        "zswap 压缩池不够"
+      ],
+      "when_to_decrease": [
+        "zswap 内存占用大"
+      ]
+    },
+    {
+      "name": "zswap.writeback",
+      "kernel_name": "zswap_writeback_write",
+      "path": "/sys/fs/cgroup/memory.<name>/zswap.writeback",
+      "category": "tunable",
+      "gate": "CONFIG_SWAP CONFIG_ZSWAP",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1,
+        "special": {}
+      },
+      "summary": "cgroup zswap.writeback 开关。1=允许在 zswap 满时回写 swap;0=禁用回写。",
+      "increasing": {
+        "good_for": [
+          "启用 zswap 满时回写 swap"
+        ],
+        "bad_for": [
+          "加剧 swap IO"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "禁用 zswap 满时回写"
+        ],
+        "bad_for": [
+          "zswap 满时拒绝继续压缩"
+        ]
+      },
+      "consumes": [
+        "mm/memcontrol.c:zswap_writeback_write"
+      ],
+      "when_to_increase": [
+        "zswap 满时想允许回写 swap"
+      ],
+      "when_to_decrease": [
+        "zswap 满时想拒绝压缩而非回写"
+      ]
+    },
+    {
+      "name": "mem",
+      "kernel_name": "proc_mem_operations",
+      "path": "/proc/<pid>/mem",
+      "category": "tunable",
+      "gate": "",
+      "unit": "interface",
+      "default": 0,
+      "range": {},
+      "summary": "/proc/<pid>/mem:进程虚拟内存的读写接口(需 CAP_SYS_PTRACE)。用于 ptrace 注入/patch,属工具接口非调参。改值即写入进程地址空间。",
+      "increasing": {
+        "good_for": [
+          "(无单调性)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性)"
+        ],
+        "bad_for": []
+      },
+      "version_notes": "工单 type=tunable 来自 tgid_base_stuff REG 的 S_IWUSR 权限位;实际是诊断/注入接口而非调参",
+      "when_to_increase": [
+        "(接口,无单调性,ptrace 注入用)"
+      ],
+      "when_to_decrease": [
+        "(接口,无单调性)"
+      ]
+    },
+    {
+      "name": "clear_refs",
+      "kernel_name": "proc_clear_refs_operations",
+      "path": "/proc/<pid>/clear_refs",
+      "category": "tunable",
+      "gate": "CONFIG_PROC_PAGE_MONITOR",
+      "unit": "enum: 1-5",
+      "default": 0,
+      "range": {
+        "special": {
+          "1": "清所有 RSS-Referenced 位(CLEAR_REFS_ALL)",
+          "2": "清 Anon(CLEAR_REFS_ANON)",
+          "3": "清 Mapped(CLEAR_REFS_MAPPED)",
+          "4": "清 SoftDirty(CLEAR_REFS_SOFT_DIRTY)",
+          "5": "重置 MM_HIWATER_RSS(CLEAR_REFS_MM_HIWATER_RSS)"
+        }
+      },
+      "summary": "/proc/<pid>/clear_refs:只写,1-5 选枚举清 RSS-Referenced/Anon/Mapped/SoftDirty/MM_HIWATER_RSS;用于重置访问位后做 workingset 采样。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,枚举)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,枚举)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "fs/proc/task_mmu.c:clear_refs_write"
+      ],
+      "when_to_increase": [
+        "想清 RSS-Referenced 位做 workingset 采样"
+      ],
+      "when_to_decrease": [
+        "(枚举,无单调性)"
+      ]
+    },
+    {
+      "name": "transparent_hugepage",
+      "kernel_name": "setup_transparent_hugepage",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "enum: always|madvise|never",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline transparent_hugepage=always|madvise|never。boot 时设 THP anon 全局策略位(TRANSPARENT_HUGEPAGE_FLAG / _REQ_MADV_FLAG)。",
+      "increasing": {
+        "good_for": [
+          "扩大 THP 应用面(always>madvise>never)"
+        ],
+        "bad_for": [
+          "加剧内存碎片开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 THP 开销(趋向 never)"
+        ],
+        "bad_for": [
+          "失去 THP 大页优势"
+        ]
+      },
+      "consumes": [
+        "mm/huge_memory.c:setup_transparent_hugepage"
+      ],
+      "version_notes": "boot-only 参数;运行时通过 /sys/kernel/mm/transparent_hugepage/enabled 控制",
+      "when_to_increase": [
+        "THP 应用面不够广想 always"
+      ],
+      "when_to_decrease": [
+        "THP 开销大想 never"
+      ]
+    },
+    {
+      "name": "thp_anon",
+      "kernel_name": "setup_thp_anon",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline thp_anon=<order_or_range>[:always|madvise|inherit|never];... 多段。按 page size(order)精细配置 anon THP 各 order 的策略位图(always/madvise/inherit/never)。",
+      "increasing": {
+        "good_for": [
+          "(策略位图,无单调性)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(策略位图,无单调性)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/huge_memory.c:setup_thp_anon"
+      ],
+      "version_notes": "boot-only;精细到每个 page size order,运行时通过 /sys/kernel/mm/transparent_hugepage/hugepages-NNNkB/enabled 控制",
+      "when_to_increase": [
+        "想扩大某 order anon THP 启用范围"
+      ],
+      "when_to_decrease": [
+        "想收窄某 order anon THP"
+      ]
+    },
+    {
+      "name": "numa_balancing",
+      "kernel_name": "setup_numabalancing",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_NUMA_BALANCING",
+      "unit": "enum: enable|disable",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline numa_balancing=enable|disable。覆盖运行时 NUMA balancing 默认开关(numabalancing_default),优先级高于 sysctl /proc/sys/kernel/numa_balancing。",
+      "increasing": {
+        "good_for": [
+          "启用 NUMA balancing",
+          "促进内存就近分配"
+        ],
+        "bad_for": [
+          "加剧 TLB miss 开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "禁用 NUMA balancing",
+          "减少 TLB miss"
+        ],
+        "bad_for": [
+          "恶化 NUMA 局部性"
+        ]
+      },
+      "consumes": [
+        "mm/mempolicy.c:setup_numabalancing"
+      ],
+      "version_notes": "boot-only;运行时通过 /proc/sys/kernel/numa_balancing 控制",
+      "when_to_increase": [
+        "NUMA 局部性差想开启 NUMA balancing"
+      ],
+      "when_to_decrease": [
+        "NUMA balancing 扫描开销大"
+      ]
+    },
+    {
+      "name": "memhp_default_state",
+      "kernel_name": "setup_memhp_default_state",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_MEMORY_HOTPLUG",
+      "unit": "enum: offline|online|online_kernel|online_movable",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline memhp_default_state=offline|online|online_kernel|online_movable。hotplug 内存默认 onlining 类型,写入 mhp_default_online_type。",
+      "increasing": {
+        "good_for": [
+          "(枚举,无单调性)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(枚举,无单调性)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/memory_hotplug.c:setup_memhp_default_state",
+        "drivers/base/memory.c:mhp_online_type_from_str"
+      ],
+      "version_notes": "boot-only;默认值取决于 CONFIG_MEMORY_HOTPLUG_DEFAULT_ONLINE/ONLINE_KERNEL/ONLINE_MOVABLE",
+      "when_to_increase": [
+        "hotplug 内存想默认 online"
+      ],
+      "when_to_decrease": [
+        "hotplug 内存想默认 offline"
+      ]
+    },
+    {
+      "name": "hugepage_alloc_threads",
+      "kernel_name": "hugepage_alloc_threads_setup",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 1,
+      "range": {
+        "min": 1,
+        "special": {
+          "0": "解析失败被忽略,用默认"
+        }
+      },
+      "summary": "cmdline hugepage_alloc_threads=N。boot 时分配 hugepage 用的并行线程数(默认=num_online_cpus()/4,最小1)。影响 boot 时大页分配速度。",
+      "increasing": {
+        "good_for": [
+          "加速 boot 时大页分配"
+        ],
+        "bad_for": [
+          "加剧并行 CPU 占用"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少并行 CPU 占用"
+        ],
+        "bad_for": [
+          "加剧 boot 时大页分配耗时"
+        ]
+      },
+      "consumes": [
+        "mm/hugetlb.c:gather_boot_pages"
+      ],
+      "when_to_increase": [
+        "boot 时大页分配慢"
+      ],
+      "when_to_decrease": [
+        "并行分配占 CPU 多"
+      ]
+    },
+    {
+      "name": "reserve_mem",
+      "kernel_name": "reserve_mem",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline reserve_mem=<size>:<align>:<name>。boot 期间 memblock 预留一块专用内存(供 driver/feature 用),最多 RESERVE_MEM_MAX_ENTRIES 项。运行时通过 reserve_mem_find_by_name() 查询。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,布局参数)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,布局参数)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/memblock.c:reserve_mem",
+        "mm/memblock.c:reserve_mem_find_by_name"
+      ],
+      "version_notes": "boot-only;每项需 size:align:name 三段;KHO 重启可复用同名预留区",
+      "when_to_increase": [
+        "需为 driver/feature 预留专用内存"
+      ],
+      "when_to_decrease": [
+        "(布局参数,无单调性)"
+      ]
+    },
+    {
+      "name": "swapaccount",
+      "kernel_name": "setup_swap_account",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_SWAP",
+      "unit": "deprecated",
+      "deprecated": true,
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline swapaccount=0|1。已废弃(pr_warn_once),swap cgroup 控制现在通过 cgroupfs 配置。=0 时打警告告知用 cgroupfs 替代。",
+      "increasing": {
+        "good_for": [
+          "(已废弃,改无效)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(已废弃,改无效)"
+        ],
+        "bad_for": []
+      },
+      "version_notes": "未确认: 仅 pr_warn_once 警告,无实际行为;swap cgroup 控制由 cgroupfs swap.* 文件实现",
+      "when_to_increase": [],
+      "when_to_decrease": []
+    },
+    {
+      "name": "cgroup.memory",
+      "kernel_name": "cgroup_memory",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_MEMCG",
+      "unit": "cmdline",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline cgroup.memory=nosocket|nokmem|nobpf(逗号组合)。禁用 memcg 对应子控制器(socket/kmem/bpf)的记账,减少开销。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,组合开关)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,组合开关)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/memcontrol.c:cgroup_memory"
+      ],
+      "when_to_increase": [
+        "想禁用 memcg 子控制器(socket/kmem/bpf)"
+      ],
+      "when_to_decrease": [
+        "(组合开关,无单调性)"
+      ]
+    },
+    {
+      "name": "stack_guard_gap",
+      "kernel_name": "cmdline_parse_stack_guard_gap",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "pages",
+      "default": 256,
+      "range": {},
+      "summary": "cmdline stack_guard_gap=<pages>。栈与其他映射的最小保护间隙(单位页,默认256页=1MB)。防栈溢出污染邻居映射。",
+      "increasing": {
+        "good_for": [
+          "扩大栈保护间隙",
+          "提升抗栈溢出能力"
+        ],
+        "bad_for": [
+          "加剧地址空间浪费"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧地址空间布局"
+        ],
+        "bad_for": [
+          "减弱栈溢出保护"
+        ]
+      },
+      "consumes": [
+        "mm/mmap.c:expand_stack",
+        "mm/mmap.c:cmdline_parse_stack_guard_gap"
+      ],
+      "when_to_increase": [
+        "栈溢出风险高"
+      ],
+      "when_to_decrease": [
+        "地址空间浪费"
+      ]
+    },
+    {
+      "name": "hashdist",
+      "kernel_name": "set_hashdist",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_NUMA",
+      "unit": "bool",
+      "default": true,
+      "range": {
+        "special": {
+          "0": "集中分配 hash 表(boot 时 VIRTUAL_BUG_ON 单 node 会强制关)"
+        }
+      },
+      "summary": "cmdline hashdist=0|1。是否把 hash 表分散到各 NUMA node(0=集中,1=分布,默认=IS_ENABLED(CONFIG_64BIT))。单 N_MEMORY 节点自动设为 false。",
+      "increasing": {
+        "good_for": [
+          "启用 hash 表 NUMA 分布",
+          "提升多 node 访问局部性"
+        ],
+        "bad_for": [
+          "加剧 hash 表碎片化"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "集中 hash 表"
+        ],
+        "bad_for": [
+          "恶化跨 node 访问"
+        ]
+      },
+      "consumes": [
+        "mm/mm_init.c:set_hashdist",
+        "mm/mm_init.c:fixup_hashdist"
+      ],
+      "when_to_increase": [
+        "多 node hash 表访问局部性差"
+      ],
+      "when_to_decrease": [
+        "单 node 想集中 hash 表"
+      ]
+    },
+    {
+      "name": "norandmaps",
+      "kernel_name": "disable_randmaps",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline norandmaps(无参)。关闭 mmap 随机化(randomize_va_space=0),用于调试或地址固定的旧二进制。",
+      "increasing": {
+        "good_for": [
+          "(无参数,开启即关 ASLR)"
+        ],
+        "bad_for": [
+          "ASLR 失效"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "(无参数)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/memory.c:disable_randmaps"
+      ],
+      "when_to_increase": [
+        "调试需固定地址或老二进制兼容"
+      ],
+      "when_to_decrease": [
+        "(无参数,仅开启)"
+      ]
+    },
+    {
+      "name": "slab_nomerge",
+      "kernel_name": "setup_slab_nomerge",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline slab_nomerge(无参,也兼容 slub_nomerge)。强制 slab 不合并(slab_nomerge=true),便于排查每个 cache 的内存占用,代价是 slab 元数据开销变大。",
+      "increasing": {
+        "good_for": [
+          "(开启即不合并)便于排查 slab"
+        ],
+        "bad_for": [
+          "元数据开销大"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "(无参数)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/slab_common.c:setup_slab_nomerge"
+      ],
+      "when_to_increase": [
+        "想排查 slab 占用"
+      ],
+      "when_to_decrease": [
+        "(无参数,仅开启)"
+      ]
+    },
+    {
+      "name": "slab_merge",
+      "kernel_name": "setup_slab_merge",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline slab_merge(无参,也兼容 slub_merge)。允许 slab 合并(slab_nomerge=false,与 CONFIG_SLAB_MERGE_DEFAULT 一致),减小元数据开销。",
+      "increasing": {
+        "good_for": [
+          "(开启即允许合并)元数据开销小"
+        ],
+        "bad_for": [
+          "slab 排查难"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "(无参数)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/slab_common.c:setup_slab_merge"
+      ],
+      "when_to_increase": [
+        "想减少 slab 元数据开销"
+      ],
+      "when_to_decrease": [
+        "(无参数,仅开启)"
+      ]
+    },
+    {
+      "name": "transparent_hugepage_shmem",
+      "kernel_name": "setup_transparent_hugepage_shmem",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_SHMEM CONFIG_TRANSPARENT_HUGEPAGE",
+      "unit": "enum: never|always|within_size|advise|deny|force",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline transparent_hugepage_shmem=never|always|within_size|advise|deny|force。设 shmem THP 全局策略(shmem_huge),无 transparent_hugepage 时非 never/deny 会失败。",
+      "increasing": {
+        "good_for": [
+          "扩大 shmem THP 策略激进程度"
+        ],
+        "bad_for": [
+          "加剧内存碎片"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧 shmem THP 策略"
+        ],
+        "bad_for": [
+          "失去 shmem 大页优势"
+        ]
+      },
+      "consumes": [
+        "mm/shmem.c:setup_transparent_hugepage_shmem",
+        "mm/shmem.c:shmem_parse_huge"
+      ],
+      "when_to_increase": [
+        "shmem THP 不够激进"
+      ],
+      "when_to_decrease": [
+        "shmem THP 开销大"
+      ]
+    },
+    {
+      "name": "thp_shmem",
+      "kernel_name": "setup_thp_shmem",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_SHMEM CONFIG_TRANSPARENT_HUGEPAGE",
+      "unit": "cmdline",
+      "default": "未指定",
+      "range": {},
+      "summary": "cmdline thp_shmem=<order_or_range>[:always|advise|inherit|within_size|never];... 多段。按 page size(order)精细配置 shmem THP 各 order 的策略位图。",
+      "increasing": {
+        "good_for": [
+          "(策略位图,无单调性)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(策略位图,无单调性)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "mm/shmem.c:setup_thp_shmem"
+      ],
+      "version_notes": "boot-only;精细到每个 page size order",
+      "when_to_increase": [
+        "想扩大某 order shmem THP 启用范围"
+      ],
+      "when_to_decrease": [
+        "想收窄某 order shmem THP"
+      ]
+    }
+  ],
+  "carry_forward_notes": "v7.2-rc7 相对 v7.1.0-rc5: mm 参数层 0 增删 0 字段(kn/type/gate)变化(已 verify: missing=0/extra=0/drifted=0)。语义层(default/range/gate/行为)逐个核对源码无变化,本版本为 carry forward。抽查证据: vm_swappiness 默认仍 60 (mm/vmscan.c:199); vm_dirty_ratio 默认仍 20 (mm/page-writeback.c:92); min_free_kbytes 默认 1024 (mm/page_alloc.c:271); watermark_scale_factor 默认 10 (mm/page_alloc.c:274); watermark_boost_factor 默认 15000 (mm/page_alloc.c:273); nr_overcommit_hugepages 默认 0; compaction_proactiveness 默认 20 (mm/compaction.c:1906); extfrag_threshold 默认 500 (mm/compaction.c:1907); overcommit_ratio 默认 50 (mm/util.c:782); overcommit_memory 默认 OVERCOMMIT_GUESS=0 (mm/util.c:781); page_lock_unfairness 默认 5 (mm/filemap.c:1082); randomize_va_space 默认 2 (mm/memory.c:121); page_cluster 默认 swap_setup 中按 <16MB=2 否则 3 (mm/swap.c:1190); sysctl_overcommit_kbytes 默认 0 (mm/util.c:783); dirty_background_ratio 默认 10 (mm/page-writeback.c:75); dirty_background_bytes 默认 0; vm_dirty_bytes 默认 0 (mm/page-writeback.c:98); laptop_mode 仍 deprecated 仅 pr_warn (mm/page-writeback.c:2226); memory_failure_early_kill 默认 0; memory_failure_recovery 默认 1; enable_soft_offline 默认 1 (mm/memory-failure.c:71-75); vm_highmem_is_dirtyable 默认 0 (mm/page-writeback.c:87); sysctl compact_unevictable_allowed 默认 =CONFIG_COMPACT_UNEVICTABLE_DEFAULT (mm/compaction.c:1900); gate 配置未变(mm recipe version 仍是 v7.1.0-rc5,但 v7.1/v7.2 扫描结果天然一致)。"
+}

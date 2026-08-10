@@ -1,0 +1,364 @@
+{
+  "module": "irq",
+  "version": "v7.2-rc7",
+  "_doc": "irq 流程层。把 irq 当中断子系统专家。playbook 供弹药(能力+规则+判据+杠杆族+交互),不强制走哪条路。query.py --mode 只决定展示哪部分,真正推理是消费者 LLM 自己的行为。所有 lever/observe 引用用 kernel_name 或 path 锚定现有 tunable/readonly,不复制参数详情(避免冗余+版本漂移)。阈值是经验值非源码硬约束。irq 调优三大维度:中断亲和性(per-irq 绑核)、中断调试/恢复(spurious 检测/misrouted 修复/轮询)、NUMA 局部性(node 配 affinity)。per-irq 参数 path 含 <irqN> 占位符,消费者需代入实际中断号(从 /proc/interrupts 取 IRQ 行号)。",
+  "modes": {
+    "intelligent": {
+      "description": "把 irq 当专家。消费者靠 capabilities + observation_map + thresholds + leverage_map 推理下一步读什么、判什么、动哪个参数。LLM 自主决策,playbook 只提供专家方法论与映射,不写死步骤。",
+      "how_to_use": "消费者拿到 profiling 描述后:(1) 读 capabilities 的 when_applies 判断属哪类问题;(2) 用 observation_map 找该读的 readonly;(3) 读值后用 thresholds 判异常;(4) 用 leverage_map 映射到候选 tunable 族;(5) 取 tunable(用 query.py --name <kernel_name>) 的 increasing/decreasing 决定调向。允许推理跳出 playbook——如 profiling 指向非 irq 问题(调度/内存)时建议转模块。"
+    },
+    "rule": {
+      "description": "固定 if-then 规则驱动。消费者按 rules 逐条匹配 trigger(symptom/keywords),命中则按 steps 顺序执行 read→judge→recommend。不靠 LLM 推理,可复现、可审计。",
+      "how_to_use": "消费者描述 profiling 后,遍历 rules:trigger 命中即按 steps 执行。无命中则报告'无规则匹配,建议转 intelligent 模式'。规则命中结论可附 fallback_to_capability 指回 capabilities 做补充。"
+    },
+    "hybrid": {
+      "description": "规则先尝试,命中则用规则结论但附智能推理的补充建议;规则无命中则转 intelligent 模式自由推理。兼顾可复现与覆盖度。",
+      "how_to_use": "先跑 rule 模式;有命中→输出规则结论 + 用 capabilities 补充'规则可能漏的角度';无命中→转 intelligent 模式。"
+    }
+  },
+  "capabilities": [
+    {
+      "id": "irq-affinity-tuning",
+      "name": "中断亲和性诊断",
+      "when_applies": "profiling 显示某 CPU 中断处理率畸高/其他核闲置,或改了 smp_affinity 不生效,或想隔离实时核免收中断,或多队列网卡队列与核未对齐。",
+      "reasoning": "先从 /proc/interrupts 定位热点中断行(IRQ 号)+ 热点 CPU(哪列计数高)→ 进入 /proc/irq/<irqN>/ 子树。读 effective_affinity 看中断真正投递的 CPU,与 smp_affinity 对比:effective ⊂ smp_affinity 正常,过窄说明受 irq_chip/managed-IRQ/CPU 在线限制。若 effective 恒定单核而 smp_affinity 设了多核,说明该中断无法真正多核分发(硬件限制),不是 bug。改 smp_affinity 前先确认 irq_can_set_affinity_usr 是否允许(AFFINITY_MANAGED/PER_CPU 中断写返回 -EPERM)。改完等几个中断周期再读 effective_affinity 验证。对多队列网卡,优先参考 affinity_hint 范围内选核以获得驱动预期局部性。对实时/业务核隔离,把 smp_affinity 收束到 housekeeping 核(配合 isolcpus/nohz_full 的 housekeeping_mask)。新中断的默认亲和性由 /proc/irq/default_smp_affinity 控制,改它只影响后续新中断,已存在中断需逐个改。",
+      "observe": [
+        "irq_effective_aff_proc_show",
+        "irq_affinity_hint_proc_show",
+        "/proc/interrupts per-CPU per-IRQ 计数"
+      ],
+      "candidate_levers": [
+        "irq_affinity_proc_ops",
+        "irq_affinity_list_proc_ops",
+        "default_affinity_proc_ops"
+      ]
+    },
+    {
+      "id": "irq-debug-recovery",
+      "name": "中断风暴/伪中断诊断",
+      "when_applies": "profiling 显示 /proc/irq/<irqN>/spurious 的 count/unhandled 畸高,或某中断被内核自动禁用(IRQS_SPURIOUS_DISABLED,系统卡死/部分功能失效),或坏固件导致中断错路由无人响应,或长 IRQ handler 拖延迟。",
+      "reasoning": "读 /proc/irq/<irqN>/spurious 的 count/unhandled/last_unhandled_ms:count 接近 100000 且 unhandled>99900 → 触发 spurious 检测自动禁用路径(noirqdebug 设了则不累积,此文件 count/unhandled 停在 0)。若中断已被禁系统卡死,需 boot 加 irqpoll 让 poll_spurious_irqs 定时器每 HZ/10 重试被禁中断;若只是偶发错路由,irqfixup=1 在 IRQ_NONE 时扫共享 handler 找真主(开销小于 irqpoll)。noirqdebug 反向用:防真中断因偶发未处理被误禁(但代价是真坏中断也不被自动隔离,会持续风暴)。长 IRQ handler 诊断:boot 加 irqhandler.duration_warn_us=<us>,设阈值后 __handle_irq_event_percpu 在每个 handler 前后 local_clock 算 delta,超限 pr_warn_ratelimited 通报 [CPU%u] long duration of IRQ[%u:%ps] 定位是哪个 handler 慢。注意 irqfixup/irqpoll 在 PREEMPT_RT 内核不支持(pr_warn 后忽略)。noirqdebug/irqfixup/irqpoll/irqaffinity/irqhandler.duration_warn_us 都是 boot-only,reboot 改 grub 才生效。",
+      "observe": [
+        "irq_spurious_proc_show",
+        "/proc/interrupts 该 IRQ 行是否还在涨(被禁后停)"
+      ],
+      "candidate_levers": [
+        "noirqdebug_setup",
+        "irqfixup_setup",
+        "irqpoll_setup",
+        "irqhandler_duration_check_setup"
+      ]
+    },
+    {
+      "id": "irq-numa-locality",
+      "name": "中断 NUMA 局部性诊断",
+      "when_applies": "NUMA 系统、profiling 显示中断处理跨节点访问多、effective_affinity 的核不在中断 node 上、或网卡/设备中断与数据/描述符跨节点。",
+      "reasoning": "读 /proc/irq/<irqN>/node 看描述符所在 NUMA 节点→读 effective_affinity 看中断真正投递的核→对比:若 effective 核不在 node 上,中断处理会跨节点访问描述符/驱动数据,NUMA 局部性差。理想是把 smp_affinity 设到 node 内的核(让 effective ⊂ node 的 CPU 集合)。注意 node 是描述符分配节点不一定等于硬件来源节点——判硬件局部性应结合 affinity_hint(驱动建议往往反映硬件队列与 CPU 的对应,如网卡 Rx 队列 N 与核 N 对应)。改 smp_affinity 后读 effective_affinity 验证是否真落到 node 内。对 boot 期就想要的默认 NUMA 局部性,用 irqaffinity=<cpulist> 设 boot 默认(boot-only),只影响后续新中断。default_smp_affinity 运行时改同理只影响新中断。",
+      "observe": [
+        "irq_node_proc_show",
+        "irq_effective_aff_proc_show",
+        "irq_affinity_hint_proc_show"
+      ],
+      "candidate_levers": [
+        "irq_affinity_proc_ops",
+        "irq_affinity_list_proc_ops",
+        "default_affinity_proc_ops",
+        "irq_affinity_setup"
+      ]
+    }
+  ],
+  "observation_map": {
+    "_doc": "症状信号 → 该读的 readonly。每条结构: path=readonly 路径(占位符保留), fields=该路径里要读的字段, read=对应 readonly 的 kernel_name, meaning=该信号揭示什么。智能模式当推理依据,规则模式当 read 目标。tunable 的'当前值'(如 smp_affinity 写的请求掩码)不在此(非 readonly),配置态观察见 capabilities.reasoning。",
+    "irq_concentrated_one_cpu": {
+      "path": "/proc/interrupts|/proc/irq/<irqN>/effective_affinity|/proc/irq/<irqN>/smp_affinity",
+      "fields": [
+        "per-IRQ per-CPU 计数",
+        "effective_affinity CPU 掩码",
+        "smp_affinity 请求掩码"
+      ],
+      "read": "irq_effective_aff_proc_show|/proc/interrupts(跨文件,非本模块工单但紧密配合)",
+      "meaning": "per-CPU 计数极差大=中断集中某核;effective_affinity 与 smp_affinity 对比揭示写入是否被采纳(effective ⊂ smp_affinity 正常,过窄说明受芯片/managed 限制)。指向 irq-affinity-tuning。smp_affinity 当前值需读 tunable 路径,非 readonly。"
+    },
+    "affinity_write_no_effect": {
+      "path": "/proc/irq/<irqN>/effective_affinity|/proc/irq/<irqN>/effective_affinity_list",
+      "fields": [
+        "实际投递 CPU 掩码",
+        "实际投递 CPU 列表"
+      ],
+      "read": "irq_effective_aff_proc_show|irq_effective_aff_list_proc_show",
+      "meaning": "写 smp_affinity 后读 effective_affinity 验证:若 effective 仍单核而 smp_affinity 设了多核 → 该中断无法真正多核分发(硬件/managed 限制),写返回 -EPERM 或被忽略。指向 irq-affinity-tuning。"
+    },
+    "spurious_irq_storm": {
+      "path": "/proc/irq/<irqN>/spurious",
+      "fields": [
+        "count",
+        "unhandled",
+        "last_unhandled ms"
+      ],
+      "read": "irq_spurious_proc_show",
+      "meaning": "count 高 + unhandled 高 → 该中断大量无人处理,可能已被或将被 spurious 检测自动禁用(IRQS_SPURIOUS_DISABLED);last_unhandled ms 小=仍在频繁出现,大=历史问题已停。指向 irq-debug-recovery。noirqdebug 设了则此文件 count/unhandled 停在 0(检测被关)。"
+    },
+    "numa_remote_irq": {
+      "path": "/proc/irq/<irqN>/node|/proc/irq/<irqN>/effective_affinity|/proc/irq/<irqN>/affinity_hint",
+      "fields": [
+        "描述符 NUMA 节点号",
+        "实际投递 CPU 掩码",
+        "驱动建议掩码"
+      ],
+      "read": "irq_node_proc_show|irq_effective_aff_proc_show|irq_affinity_hint_proc_show",
+      "meaning": "effective 核不在 node 上=中断处理跨节点访问描述符;affinity_hint 反映驱动预期(如网卡队列-N 对应核 N)。指向 irq-numa-locality。node 是描述符分配节点不一定等于硬件来源节点。"
+    }
+  },
+  "thresholds": {
+    "_doc": "判据规则:readonly 值落在什么范围算异常。给智能模式当推理依据,给规则模式当 judge 条件。阈值是经验值不是源码硬约束,现场可调,别当铁律。",
+    "irq_cpu_spread": {
+      "desc": "(max(per-CPU 计数) - min(per-CPU 计数)) / max,对单 IRQ 行算(/proc/interrupts)",
+      "warn_if_gt": 0.5,
+      "meaning": "某中断 per-CPU 计数极差超 50% → 中断集中某核,亲和性未均衡或被限制"
+    },
+    "spurious_unhandled_ratio": {
+      "desc": "unhandled / count(读 /proc/irq/<irqN>/spurious,count 重置周期约 100000)",
+      "warn_if_gt": 0.5,
+      "meaning": "未处理占比过半 → 该中断大量无人处理,临近或已触发 spurious 自动禁用"
+    },
+    "spurious_unhandled_abs": {
+      "desc": "unhandled 绝对值(/proc/irq/<irqN>/spurious)",
+      "warn_if_gt": 90000,
+      "meaning": "unhandled 接近 99900 阈值 → 即将触发 pr_emerg + irq_disable(源码 if unhandled > 99900)"
+    },
+    "irq_numa_mismatch": {
+      "desc": "effective_affinity 的核是否落在 node 内(0=落在,1=跨节点)",
+      "warn_if_gt": 0,
+      "meaning": "中断投递核不在描述符 node 上 → NUMA 跨节点访问,局部性差"
+    }
+  },
+  "leverage_map": {
+    "_doc": "症状类别 → 候选 tunable 族(kernel_name 引用,不复制参数详情)。消费者拿 kernel_name 去 query.py --name 取 increasing/decreasing 决定调向。",
+    "irq-affinity-tuning": [
+      "irq_affinity_proc_ops",
+      "irq_affinity_list_proc_ops",
+      "default_affinity_proc_ops"
+    ],
+    "irq-debug-recovery": [
+      "noirqdebug_setup",
+      "irqfixup_setup",
+      "irqpoll_setup",
+      "irqhandler_duration_check_setup"
+    ],
+    "irq-numa-locality": [
+      "irq_affinity_proc_ops",
+      "irq_affinity_list_proc_ops",
+      "default_affinity_proc_ops",
+      "irq_affinity_setup"
+    ]
+  },
+  "interactions": {
+    "_doc": "参数间依赖/互斥/boot_only/mutex——消费者调 A 时联动 B。boot_only 列的是运行时不可改的(改需 reboot)。mutex 是互斥语义。",
+    "pairs": [
+      {
+        "relation": "同物异格式:smp_affinity(位图) 与 smp_affinity_list(cpulist) 是同一底层掩码的两种表示,改任一另一个同步反映。任选其一改即可,别同时设。",
+        "params": [
+          "irq_affinity_proc_ops",
+          "irq_affinity_list_proc_ops"
+        ]
+      },
+      {
+        "relation": "全局 vs per-irq:default_smp_affinity 设新中断默认继承掩码,已存在中断不回退;要重设现有中断得逐个写其 smp_affinity。新中断 desc_smp_init/irq_setup_affinity 时继承 default。",
+        "params": [
+          "default_affinity_proc_ops",
+          "irq_affinity_proc_ops"
+        ]
+      },
+      {
+        "relation": "boot 默认 vs 运行时默认:irqaffinity= 在 init_irq_default_affinity 前覆盖 irq_default_affinity(boot-only),default_smp_affinity 运行时改同一变量但只影响后续新中断。两者作用同一底层掩码,boot 期 irqaffinity 优先。",
+        "params": [
+          "irq_affinity_setup",
+          "default_affinity_proc_ops"
+        ]
+      },
+      {
+        "relation": "递进关系:irqfixup=1(IRQ_NONE 时扫共享 handler),irqpoll=2(额外对 IRQF_IRQPOLL handler 也扫 + 启动 poll_spurious_irq_timer 每 HZ/10 轮询被禁中断)。开了 irqpoll 等于包含 irqfixup,别同时设。两者 PREEMPT_RT 不支持。",
+        "params": [
+          "irqfixup_setup",
+          "irqpoll_setup"
+        ]
+      },
+      {
+        "relation": "互斥语义:noirqdebug 关掉 spurious 检测(note_interrupt 不累积 unhandled),irqfixup/irqpoll 依赖 note_interrupt 的 unhandled 触发路径。noirqdebug + irqpoll 同设会矛盾:前者不让中断被禁,后者轮询被禁中断——poll_spurious_irqs 扫描 IRQS_SPURIOUS_DISABLED 的中断,但 noirqdebug 不让置此标志,irqpoll 的轮询部分实际空转。仅 irqfixup 部分(扫共享 handler)仍生效。",
+        "params": [
+          "noirqdebug_setup",
+          "irqpoll_setup"
+        ],
+        "note": "若目的只是防关键中断被误禁,单用 noirqdebug 即可;若目的是恢复已禁坏中断,单用 irqpoll,别同设。"
+      },
+      {
+        "relation": "隔离语义:isolcpus/nohz_full 隔离的核应不被中断打扰,需把相关 IRQ 的 smp_affinity 收束到 housekeeping 核(非本模块参数,跨模块语义提示)。",
+        "params": [
+          "irq_affinity_proc_ops",
+          "isolcpus(housekeeping 模块)"
+        ]
+      }
+    ],
+    "boot_only": [
+      "noirqdebug_setup",
+      "irqfixup_setup",
+      "irqpoll_setup",
+      "irq_affinity_setup",
+      "irqhandler_duration_check_setup"
+    ],
+    "mutex": [
+      "smp_affinity 与 smp_affinity_list:同物异格式,改任一即可,别同时设(语义非互斥但操作冗余)。",
+      "AFFINITY_MANAGED/PER_CPU 中断:对 smp_affinity 写返回 -EPERM,这些中断由内核/driver 管理不可用户态改(查 effective_affinity 前先试 cat)。"
+    ]
+  },
+  "rules": [
+    {
+      "id": "R1-irq-concentrated",
+      "trigger": {
+        "symptom": "某 CPU 中断处理率畸高、其他核闲置、中断集中",
+        "keywords": [
+          "中断",
+          "irq",
+          "亲和",
+          "affinity",
+          "集中",
+          "某核",
+          "网卡",
+          "队列",
+          "spread",
+          "imbalance"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/interrupts",
+          "field": "per-IRQ per-CPU 计数",
+          "note": "定位热点中断行(IRQ 号)与热点 CPU(哪列计数高)"
+        },
+        {
+          "judge": "irq_cpu_spread > 0.5 → 该中断集中某核,亲和性未均衡"
+        },
+        {
+          "read": "/proc/irq/<irqN>/effective_affinity",
+          "judge": "若 effective ⊂ smp_affinity 且过窄 → 受芯片/managed 限制;若 effective 单核而 smp_affinity 设了多核 → 该中断无法多核分发"
+        },
+        {
+          "read": "/proc/irq/<irqN>/affinity_hint",
+          "judge": "hint 非空 → 优先在 hint 范围内选核(驱动预期局部性)"
+        },
+        {
+          "recommend": "写 irq_affinity_list_proc_ops(cpulist 格式易写)把中断绑到目标核集。若该中断是 AFFINITY_MANAGED/PER_CPU(写返回 -EPERM)→ 不可用户态改,只能调驱动队列数/RSS 配置。改完读 effective_affinity 验证。"
+        },
+        {
+          "verify": "调后重读 /proc/interrupts 该 IRQ 行的 irq_cpu_spread 应下降"
+        }
+      ],
+      "fallback_to_capability": "irq-affinity-tuning"
+    },
+    {
+      "id": "R2-spurious-storm",
+      "trigger": {
+        "symptom": "中断被自动禁用、系统卡死、坏中断无人响应、spurious 计数畸高",
+        "keywords": [
+          "spurious",
+          "伪中断",
+          "unhandled",
+          "无人处理",
+          "禁用",
+          "disabled",
+          "风暴",
+          "nobody cared",
+          "Disabling IRQ"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/irq/<irqN>/spurious",
+          "field": "count,unhandled,last_unhandled ms",
+          "note": "定位被禁/失控的中断号"
+        },
+        {
+          "judge": "spurious_unhandled_ratio > 0.5 或 spurious_unhandled_abs > 90000 → 临近或已触发 spurious 自动禁用(源码 unhandled > 99900 时 pr_emerg + irq_disable + IRQS_SPURIOUS_DISABLED)"
+        },
+        {
+          "read": "/proc/interrupts 该 IRQ 行",
+          "judge": "计数已停 → 中断被禁;计数仍在涨但 unhandled 高 → 风暴中尚未禁"
+        },
+        {
+          "recommend": "若已被禁系统卡死:boot 加 irqpoll(启用 misrouted 修复 + 每 HZ/10 轮询被禁中断重试)。若只是偶发错路由:boot 加 irqfixup(IRQ_NONE 时扫共享 handler,开销小于 irqpoll)。若真中断因偶发未处理被误禁:boot 加 noirqdebug(关 spurious 检测,但真坏中断也不被自动隔离)。注意三者 boot-only 且 PREEMPT_RT 不支持 irqfixup/irqpoll。"
+        },
+        {
+          "verify": "重启加 cmdline 后读 /proc/irq/<irqN>/spurious 的 unhandled 应不再累积(noirqdebug)或被禁中断恢复计数应重新涨(irqpoll 轮询成功)"
+        }
+      ],
+      "fallback_to_capability": "irq-debug-recovery"
+    },
+    {
+      "id": "R3-long-irqhandler",
+      "trigger": {
+        "symptom": "IRQ handler 跑太久影响实时性、长中断拖延迟",
+        "keywords": [
+          "长中断",
+          "handler",
+          "duration",
+          "延迟",
+          "latency",
+          "实时",
+          "realtime",
+          "long duration"
+        ]
+      },
+      "steps": [
+        {
+          "read": "dmesg | grep 'long duration of IRQ'",
+          "judge": "若无输出且未设 irqhandler.duration_warn_us → 当前未启用检测,需 boot 加参数"
+        },
+        {
+          "recommend": "boot 加 irqhandler.duration_warn_us=<us>(如 100 即 100us 起告警)。设后 __handle_irq_event_percpu 在每个 handler 前后 local_clock 算 delta,超限 pr_warn_ratelimited 通报 [CPU%u] long duration of IRQ[%u:%ps] 定位是哪个 handler 慢。实时调试可调小阈值(如 50)抓更多;只想抓极端调大(如 500)减少噪音。boot-only,改需 reboot。"
+        },
+        {
+          "verify": "重启加参数后跑业务负载,dmesg 应出现长中断告警,据此定位优化对应驱动 handler(本模块只负责抓,优化属驱动层)"
+        }
+      ],
+      "fallback_to_capability": "irq-debug-recovery"
+    },
+    {
+      "id": "R4-numa-irq-locality",
+      "trigger": {
+        "symptom": "NUMA 系统中断处理跨节点、effective_affinity 核不在 node 上、网卡中断局部性差",
+        "keywords": [
+          "numa",
+          "节点",
+          "node",
+          "局部性",
+          "locality",
+          "跨节点",
+          "remote",
+          "网卡"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/irq/<irqN>/node",
+          "field": "描述符 NUMA 节点号",
+          "note": "定位中断描述符所在节点"
+        },
+        {
+          "read": "/proc/irq/<irqN>/effective_affinity",
+          "judge": "irq_numa_mismatch > 0(effective 核不在 node 上) → NUMA 跨节点访问,局部性差"
+        },
+        {
+          "read": "/proc/irq/<irqN>/affinity_hint",
+          "judge": "hint 非空 → 优先按 hint 设(驱动预期队列-核对应)"
+        },
+        {
+          "recommend": "写 irq_affinity_list_proc_ops 把中断亲和性设到 node 内的核集(让 effective ⊂ node 的 CPU)。若想 boot 期就设默认:boot 加 irqaffinity=<cpulist> 设 node 内核集(boot-only)。运行时改默认用 default_smp_affinity(只影响新中断)。"
+        },
+        {
+          "verify": "调后重读 effective_affinity 应落在 node 内,中断处理跨节点访问应减少"
+        }
+      ],
+      "fallback_to_capability": "irq-numa-locality"
+    }
+  ]
+}

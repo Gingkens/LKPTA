@@ -1,0 +1,152 @@
+{
+  "module": "sched",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "name": "level",
+      "kernel_name": "sd->level",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/level",
+      "category": "readonly",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "summary": "该调度域在 CPU 拓扑层级中的深度：0 为最底层（最小域，如 SMT/CLS/MC），向上逐级递增到顶层 NUMA 域（sd->level = child->level + 1，topology.c:2507）。",
+      "use": "读值=域深度。判断某个域在哪一层，配合同目录 flags 判断域类型（如是否 NUMA 域）。调 migration_cost / relax_domain_level 前先确认目标域层级。注意：level 从 CPU 向上递增，0 不是顶层——与常见“0=最顶层”的说法相反。"
+    },
+    {
+      "name": "flags",
+      "kernel_name": "sd->flags",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/flags",
+      "category": "readonly",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "summary": "该调度域的 SD_* 标志位集合（以名字列出，如 SD_LOAD_BALANCE、SD_BALANCE_NEWIDLE、SD_NUMA、SD_ASYM_CPUCAPACITY、SD_ASYM_PACKING 等）。",
+      "use": "读出的标志名列表直接揭示该域是否参与负载均衡、是否 NUMA 域、是否大小核域。作为判断该域能否被 relax_domain_level 关闭均衡、以及 migration_cost / sched_energy_aware 调参是否生效的依据。"
+    },
+    {
+      "name": "stat",
+      "kernel_name": "cpuacct_stats_show",
+      "path": "/sys/fs/cgroup/cpuacct.<name>/stat",
+      "category": "readonly",
+      "gate": "",
+      "summary": "cgroup 内任务的 CPU 时间按态分类统计（user / system 两行），单位为 ns。",
+      "use": "读 user/system 两行判断组内负载偏用户态还是内核态，配合 usage 诊断 CPU 瓶颈类型（如 sys 占比高往往伴随锁/中断问题）。"
+    },
+    {
+      "name": "debug",
+      "kernel_name": "sched_debug_fops",
+      "path": "/sys/kernel/debug/sched/debug",
+      "category": "readonly",
+      "gate": "",
+      "summary": "调度器全局调试快照（0444）。seq 输出 Sched Debug Version、ktime/sched_clk/cpu_clk、sysctl_sched_base_slice/features、然后逐在线 CPU 打印 rq 状态（cfs_rt/rt_rq/load_avg/runnable 等）。",
+      "use": "诊断时读取全 CPU 调度队列状态：看每个 CPU 的负载、运行任务、cfs/rt 队列统计。配合 verbose 开启 domains 子树更详细。"
+    },
+    {
+      "name": "groups_flags",
+      "kernel_name": "sd->groups->flags",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/groups_flags",
+      "category": "readonly",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "summary": "该调度域首个调度组的组级 SD_* 标志位集合（sd->groups->flags，按名字列出）。不同于 sd->flags（域级），是组级继承标志。",
+      "use": "诊断组级行为：判断该组是否参与 ASYM_PACKING、是否有 SD_FLAG 的特殊语义。"
+    },
+    {
+      "name": "group_asym_prefer_cpu",
+      "kernel_name": "sd->groups->asym_prefer_cpu",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/group_asym_prefer_cpu",
+      "category": "readonly",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "summary": "该调度组的 asym_prefer_cpu（大小核场景的优先 CPU 编号）。仅在 sd->flags & SD_ASYM_PACKING 时创建。由 sched_update_asym_prefer_cpu 维护。",
+      "use": "诊断大小核 packing：读出该组当前倾向的目标 CPU，配合 flags 判断 ASYM_PACKING 是否生效。"
+    },
+    {
+      "name": "name",
+      "kernel_name": "sd->name",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/name",
+      "category": "readonly",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "summary": "该调度域的拓扑层名（如 SMT、CLS、MC、DIE、NUMA）。由 topology.c 中 sd_init 各层设置。",
+      "use": "判断该域属于哪一层拓扑。配合 level 和 flags 推断域类型。"
+    },
+    {
+      "name": "usage_user",
+      "kernel_name": "cpuusage_user_read",
+      "path": "/sys/fs/cgroup/cpuacct.<name>/usage_user",
+      "category": "readonly",
+      "gate": "",
+      "summary": "该 cgroup 在所有可能 CPU 上的用户态累计 CPU 时间（ns），CPUACCT_STAT_USER 桶。",
+      "use": "诊断该 cgroup 的 CPU 占用：用 usage_* 看 user/sys 比例；用 usage_percpu_* 找负载热点 CPU；用 usage_all 一览。配合 cpu.max/cpu.weight 判断是否需要调参。"
+    },
+    {
+      "name": "usage_sys",
+      "kernel_name": "cpuusage_sys_read",
+      "path": "/sys/fs/cgroup/cpuacct.<name>/usage_sys",
+      "category": "readonly",
+      "gate": "",
+      "summary": "该 cgroup 在所有可能 CPU 上的系统态累计 CPU 时间（ns），CPUACCT_STAT_SYSTEM 桶。",
+      "use": "诊断该 cgroup 的 CPU 占用：用 usage_* 看 user/sys 比例；用 usage_percpu_* 找负载热点 CPU；用 usage_all 一览。配合 cpu.max/cpu.weight 判断是否需要调参。"
+    },
+    {
+      "name": "usage_percpu",
+      "kernel_name": "cpuacct_percpu_seq_show",
+      "path": "/sys/fs/cgroup/cpuacct.<name>/usage_percpu",
+      "category": "readonly",
+      "gate": "",
+      "summary": "该 cgroup 每个 CPU 的总 CPU 时间（ns）序列，CPUACCT_STAT_NSTATS（全量=user+sys）。seq_show 输出每 CPU 一值空格分隔。",
+      "use": "诊断该 cgroup 的 CPU 占用：用 usage_* 看 user/sys 比例；用 usage_percpu_* 找负载热点 CPU；用 usage_all 一览。配合 cpu.max/cpu.weight 判断是否需要调参。"
+    },
+    {
+      "name": "usage_percpu_user",
+      "kernel_name": "cpuacct_percpu_user_seq_show",
+      "path": "/sys/fs/cgroup/cpuacct.<name>/usage_percpu_user",
+      "category": "readonly",
+      "gate": "",
+      "summary": "该 cgroup 每个 CPU 的用户态时间（ns）序列。",
+      "use": "诊断该 cgroup 的 CPU 占用：用 usage_* 看 user/sys 比例；用 usage_percpu_* 找负载热点 CPU；用 usage_all 一览。配合 cpu.max/cpu.weight 判断是否需要调参。"
+    },
+    {
+      "name": "usage_percpu_sys",
+      "kernel_name": "cpuacct_percpu_sys_seq_show",
+      "path": "/sys/fs/cgroup/cpuacct.<name>/usage_percpu_sys",
+      "category": "readonly",
+      "gate": "",
+      "summary": "该 cgroup 每个 CPU 的系统态时间（ns）序列。",
+      "use": "诊断该 cgroup 的 CPU 占用：用 usage_* 看 user/sys 比例；用 usage_percpu_* 找负载热点 CPU；用 usage_all 一览。配合 cpu.max/cpu.weight 判断是否需要调参。"
+    },
+    {
+      "name": "usage_all",
+      "kernel_name": "cpuacct_all_seq_show",
+      "path": "/sys/fs/cgroup/cpuacct.<name>/usage_all",
+      "category": "readonly",
+      "gate": "",
+      "summary": "该 cgroup 全量 CPU 用量表格：表头 cpu user system，逐 CPU 输出 user/system 两列（ns）。",
+      "use": "诊断该 cgroup 的 CPU 占用：用 usage_* 看 user/sys 比例；用 usage_percpu_* 找负载热点 CPU；用 usage_all 一览。配合 cpu.max/cpu.weight 判断是否需要调参。"
+    },
+    {
+      "name": "schedstat",
+      "kernel_name": "proc_pid_schedstat",
+      "path": "/proc/<pid>/schedstat",
+      "category": "readonly",
+      "gate": "CONFIG_SCHED_INFO",
+      "per_pid": true,
+      "summary": "per-task 调度统计三元组：sum_exec_runtime（总运行 ns）/ run_delay（运行队列等待 ns）/ pcount（运行次数）。sched_info_on() 关闭时输出 '0 0 0'。",
+      "use": "诊断任务延迟：run_delay 大说明任务长期在就绪队列等不到 CPU；pcount 高说明频繁被调度。判断是否需要调 nice/weight/cgroup 限额。"
+    },
+    {
+      "name": "schedstat",
+      "kernel_name": "schedstat_sops",
+      "path": "/proc/schedstat",
+      "category": "readonly",
+      "gate": "",
+      "summary": "全局调度统计：版本号+时间戳头，然后逐在线 CPU 输出 rq 统计（yld/sched/ttwu/rq_cpu_time/run_delay/pcount）和每个域的 lb_count[CPU_MAX_IDLE_TYPES]、alb_*/sbe_*/sbf_*/ttwu_* 等统计。",
+      "use": "诊断负载均衡和唤醒路径：lb_failed 高说明均衡不成功（可能 cache_nice_tries/imbalance_pct 需调）；ttwu_wake_remote 高说明跨 CPU 唤醒多。需 schedstats 开启（kernel.sched_schedstats=1）才有意义。"
+    }
+  ]
+}

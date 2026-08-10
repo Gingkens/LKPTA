@@ -1,0 +1,491 @@
+{
+  "module": "mm",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "kernel_name": "min_free_kbytes",
+      "category": "tunable",
+      "summary": "每个zone的最小空闲页数(kB)基准,直接驱动 min/low/high 水位线计算;调大保留更多空闲页给紧急分配,代价是减少可分配内存。"
+    },
+    {
+      "kernel_name": "watermark_boost_factor",
+      "category": "tunable",
+      "summary": "kswapd 触发的临时水位提升因子(单位1/10000),分配失败时把 high 水位线 boost 到此比例,缓解短期突发分配压力。"
+    },
+    {
+      "kernel_name": "watermark_scale_factor",
+      "category": "tunable",
+      "summary": "zone 的 (high-min) 水位间距因子(1/10000,默认10=0.1%),决定 kswapd/background 回收启动阈值之间的间距。"
+    },
+    {
+      "kernel_name": "defrag_mode",
+      "category": "tunable",
+      "summary": "分配时是否强制启用反碎片(ALLOC_NOFRAGMENT)模式并按 pageblock_order 唤醒 kswapd;1=始终开启,0=按 ZONE_NORMAL/DMA32 fallback 决策。"
+    },
+    {
+      "kernel_name": "percpu_pagelist_high_fraction",
+      "category": "tunable",
+      "summary": "每CPU每zone页缓存的 high 上限分数(占总页数1/N);0=用默认 batch 公式,>0 时需≥8 且将 pcp->high 设为 zone/frac。"
+    },
+    {
+      "kernel_name": "sysctl_lowmem_reserve_ratio",
+      "category": "tunable",
+      "summary": "低 zone(DMA/DMA32/Normal/...)保留页比例(1/ratio),防止高 zone fallback 把低 zone 耗尽;数组形式,默认 DMA=256/Normal=32。"
+    },
+    {
+      "kernel_name": "numa_zonelist_order",
+      "category": "tunable",
+      "summary": "NUMA zonelist 排序策略字符串(Node/Zone),决定 fallback 分配顺序;写入无效值会忽略并打警告。"
+    },
+    {
+      "kernel_name": "sysctl_min_unmapped_ratio",
+      "category": "tunable",
+      "summary": "NUMA node 触发 node reclaim 时所需的最小 unmapped pagecache 占比(%);占managed pages百分比,只在该比例之上才考虑回收。"
+    },
+    {
+      "kernel_name": "sysctl_min_slab_ratio",
+      "category": "tunable",
+      "summary": "NUMA node 触发 node reclaim 时所需的 slab 页最小占比(%);超过该阈值才考虑在 node reclaim 中回收 slab。"
+    },
+    {
+      "kernel_name": "vm_swappiness",
+      "category": "tunable",
+      "summary": "回收倾向 anon vs file 的权重(0-200);0=尽量只回收 file 页,100=anon/file 等价,>100 倾向 swap。"
+    },
+    {
+      "kernel_name": "node_reclaim_mode",
+      "category": "tunable",
+      "summary": "NUMA zone reclaim 行为位图(bit0=开启zone reclaim,bit1=允许writeout,bit2=允许unmap);默认0=不本地回收,fallback到远端。"
+    },
+    {
+      "kernel_name": "sysctl_compact_memory",
+      "category": "tunable",
+      "summary": "写入1触发全节点同步内存紧缩(compact_nodes);只读触发型,值非1会被拒绝。"
+    },
+    {
+      "kernel_name": "sysctl_compaction_proactiveness",
+      "category": "tunable",
+      "summary": "kcompactd 主动紧缩激进度(0-100);100-该值=碎片率 wmark_low,fragmentation_score 超过 wmark_high 时触发主动紧缩。"
+    },
+    {
+      "kernel_name": "sysctl_extfrag_threshold",
+      "category": "tunable",
+      "summary": "外部碎片判定阈值(0-1000),costly 高阶分配时若 fragmentation_index<=此阈值则不紧缩,避免无效紧缩。"
+    },
+    {
+      "kernel_name": "sysctl_compact_unevictable_allowed",
+      "category": "tunable",
+      "summary": "是否允许紧缩时隔离 unevictable 页(0/1);RT 系统改值会被警告,默认由 CONFIG_COMPACT_UNEVICTABLE_DEFAULT 决定。"
+    },
+    {
+      "kernel_name": "sysctl_stat_interval",
+      "category": "tunable",
+      "summary": "per-CPU vmstat 同步到全局计数器的间隔(jiffies,默认HZ=1秒);缩短间隔让 /proc/vmstat 更准但增加开销。"
+    },
+    {
+      "kernel_name": "vmstat_refresh",
+      "category": "tunable",
+      "summary": "只写触发型,echo 任意值立即刷新所有 CPU 的 vmstat 差量到全局,并校验是否有负值(发现统计异常);用于读取 vmstat 前强制同步。"
+    },
+    {
+      "kernel_name": "sysctl_vm_numa_stat",
+      "category": "tunable",
+      "summary": "是否开启 NUMA 统计事件(0/1);关闭后清零并停止累计 numa_hint_faults 等,减少计数开销但失去 NUMA 调平依据。"
+    },
+    {
+      "kernel_name": "sysctl_overcommit_memory",
+      "category": "tunable",
+      "summary": "overcommit 策略(0=启发式GUESS,1=ALWAYS 允许,2=NEVER 按 CommitLimit 严格);切到 NEVER 时同步 percpu 批次并强制同步。"
+    },
+    {
+      "kernel_name": "sysctl_overcommit_ratio",
+      "category": "tunable",
+      "summary": "OVERCOMMIT_NEVER 下的 CommitLimit = (swap + ram*ratio%);写入会清零 overcommit_kbytes(互斥)。"
+    },
+    {
+      "kernel_name": "sysctl_overcommit_kbytes",
+      "category": "tunable",
+      "summary": "OVERCOMMIT_NEVER 下用绝对 kB 表达 CommitLimit = (swap + 此值);>0 时覆盖 ratio,写入会清零 ratio(互斥)。"
+    },
+    {
+      "kernel_name": "sysctl_user_reserve_kbytes",
+      "category": "tunable",
+      "summary": "用户态 OOM 时为 root shell 保留的内存(kB,默认128MB),避免 OOM 后无法登录。"
+    },
+    {
+      "kernel_name": "sysctl_admin_reserve_kbytes",
+      "category": "tunable",
+      "summary": "管理员 OOM 救援保留内存(kB,默认8MB);与 user_reserve 一起保证 root 在 OOM 后能登录修复。"
+    },
+    {
+      "kernel_name": "sysctl_panic_on_oom",
+      "category": "tunable",
+      "summary": "OOM 时是否 panic(0=不panic,1=仅 CONSTRAINT_NONE 时panic,2=无条件panic)。"
+    },
+    {
+      "kernel_name": "sysctl_oom_kill_allocating_task",
+      "category": "tunable",
+      "summary": "OOM 时是否直接杀当前分配任务而非扫描选最坏进程(0=选最坏,1=杀当前);非 memcg OOM 才生效。"
+    },
+    {
+      "kernel_name": "sysctl_oom_dump_tasks",
+      "category": "tunable",
+      "summary": "OOM 时是否 dump 所有任务内存信息(0=否,1=是,默认1);有助于排查但产生大量日志。"
+    },
+    {
+      "kernel_name": "sysctl_max_map_count",
+      "category": "tunable",
+      "summary": "单进程最大 VMA 数量(默认USHRT_MAX-5=65530);超过则 mmap 返回 ENOMEM。"
+    },
+    {
+      "kernel_name": "sysctl_legacy_va_layout",
+      "category": "tunable",
+      "summary": "是否用旧式布局(栈底向下,堆紧跟数据段,无随机化),兼容老二进制;依赖 HAVE_ARCH_PICK_MMAP_LAYOUT 等 arch 支持。"
+    },
+    {
+      "kernel_name": "mmap_rnd_bits",
+      "category": "tunable",
+      "summary": "mmap 随机化位数,默认=CONFIG_ARCH_MMAP_RND_BITS,范围[min,max]由 arch 决定;调大增加 ASLR 强度。"
+    },
+    {
+      "kernel_name": "mmap_rnd_compat_bits",
+      "category": "tunable",
+      "summary": "兼容(32位)进程 mmap 随机化位数,默认=CONFIG_ARCH_MMAP_RND_COMPAT_BITS,范围由 arch 决定。"
+    },
+    {
+      "kernel_name": "page_cluster",
+      "category": "tunable",
+      "summary": "swapin 预读页数=2^page_cluster;默认3=8页,小内存(<16MB)=2=4页;0=禁用预读。"
+    },
+    {
+      "kernel_name": "hugetlb_sysctl_handler",
+      "category": "tunable",
+      "summary": "读写 /proc/sys/vm/nr_hugepages,按默认 hstate 调整持久 hugepage 数量(默认2MB页);写入触发 alloc/free。"
+    },
+    {
+      "kernel_name": "hugetlb_mempolicy_sysctl_handler",
+      "category": "tunable",
+      "summary": "按 NUMA mempolicy 调整 nr_hugepages;需 CONFIG_NUMA,语义同 nr_hugepages 但限定到指定 nodes。"
+    },
+    {
+      "kernel_name": "sysctl_hugetlb_shm_group",
+      "category": "tunable",
+      "summary": "允许使用 SHM_HUGETLB 的 gid(默认0=无组授权);改组授权特定组用大页共享内存。"
+    },
+    {
+      "kernel_name": "hugetlb_overcommit_handler",
+      "category": "tunable",
+      "summary": "可超额分配的 hugepage 上限(nr_overcommit_hugepages);超出持久 pool 后从 surplus pool 借,OOM 风险。"
+    },
+    {
+      "kernel_name": "movable_gigantic_pages",
+      "category": "tunable",
+      "summary": "是否允许 gigantic(>MAX_ORDER) 页迁移用于内存隔离/CMA迁移(0/1);默认0,需 arch 支持 HUGEPAGE_MIGRATION。"
+    },
+    {
+      "kernel_name": "vmemmap_optimize_enabled",
+      "category": "tunable",
+      "summary": "是否开启 HugeTLB vmemmap 优化(把 tail page struct 复用进 head page);默认由 CONFIG_HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON 决定,可改但只对后续 alloc 生效。"
+    },
+    {
+      "kernel_name": "sysctl_page_lock_unfairness",
+      "category": "tunable",
+      "summary": "page lock 被偷(steal)的次数阈值(默认5);超过则让等待者排队而非继续偷锁,平衡吞吐与公平。"
+    },
+    {
+      "kernel_name": "dirty_background_ratio",
+      "category": "tunable",
+      "summary": "脏页占 dirtyable 内存百分比,超过则 pdflush/writeback 线程后台启动回写(默认10%);与 dirty_background_bytes 互斥。"
+    },
+    {
+      "kernel_name": "dirty_background_bytes",
+      "category": "tunable",
+      "summary": "脏页绝对字节阈值,超过则启动后台回写;>0 时覆盖 background_ratio(互斥),默认0=用ratio。"
+    },
+    {
+      "kernel_name": "vm_dirty_ratio",
+      "category": "tunable",
+      "summary": "脏页占 dirtyable 内存百分比上限(默认20%),超过则产生脏页的进程被阻塞回写;与 dirty_bytes 互斥。"
+    },
+    {
+      "kernel_name": "vm_dirty_bytes",
+      "category": "tunable",
+      "summary": "脏页绝对字节上限,超过则阻塞写者;>0 时覆盖 dirty_ratio(互斥),最小 2*PAGE_SIZE,默认0=用ratio。"
+    },
+    {
+      "kernel_name": "dirty_writeback_interval",
+      "category": "tunable",
+      "summary": "周期性回写间隔(centisec,默认500=5秒);写0禁用周期回写,改值会重启 dirty_writeback_timer。"
+    },
+    {
+      "kernel_name": "dirty_expire_interval",
+      "category": "tunable",
+      "summary": "脏页过期时间(centisec,默认3000=30秒);超过此龄的脏页在下次回写时被写出。"
+    },
+    {
+      "kernel_name": "vm_highmem_is_dirtyable",
+      "category": "tunable",
+      "summary": "HIGHMEM 是否计入 dirtyable 基数(0/1);默认0=只算 lowmem,1=highmem 也算(仅 CONFIG_HIGHMEM)。"
+    },
+    {
+      "kernel_name": "laptop_mode",
+      "category": "tunable",
+      "summary": "已废弃(pr_warn),写入仅记录日志不生效;保留以兼容旧脚本。原意:笔记本模式把回写攒批以省电。"
+    },
+    {
+      "kernel_name": "sysctl_memory_failure_early_kill",
+      "category": "tunable",
+      "summary": "硬件故障页(hwpoison)是否对所有进程提前 SIGBUS(0=只杀映射该页且需信号的进程,1=尽早杀);默认0。"
+    },
+    {
+      "kernel_name": "sysctl_memory_failure_recovery",
+      "category": "tunable",
+      "summary": "硬件故障页是否尝试恢复(0=直接panic,1=尝试隔离/恢复,默认1);关掉则任何 memory_failure 都 panic。"
+    },
+    {
+      "kernel_name": "sysctl_enable_soft_offline",
+      "category": "tunable",
+      "summary": "是否允许 soft off-line 故障页(0=禁用,1=允许,默认1);soft off-line 把页迁移而非隔离整页。"
+    },
+    {
+      "kernel_name": "randomize_va_space",
+      "category": "tunable",
+      "summary": "进程地址空间随机化级别(0=关,1=共享库/mmap 随机,2=+brk 随机,默认2;CONFIG_COMPAT_BRK 时默认1)。"
+    },
+    {
+      "kernel_name": "memory_current_read",
+      "category": "readonly",
+      "summary": "cgroup 当前内存使用量(字节,含 anon+file+slab),读 memory.current;配 high/max 判断是否触限。"
+    },
+    {
+      "kernel_name": "memory_peak_write",
+      "category": "tunable",
+      "summary": "cgroup 内存峰值(memory.peak)管理;写任意值重置峰值,读返回自上次重置以来的最大 memory.current。"
+    },
+    {
+      "kernel_name": "memory_min_write",
+      "category": "tunable",
+      "summary": "cgroup 内存软下限 memory.min(page_count,可写'max'=ULLONG_MAX);承诺保留下限,回收时尽量不占。"
+    },
+    {
+      "kernel_name": "memory_low_write",
+      "category": "tunable",
+      "summary": "cgroup memory.low 软下限(page_count,'max'=不限);比 min 弱,只在父级有余地时保护子组。"
+    },
+    {
+      "kernel_name": "memory_high_write",
+      "category": "tunable",
+      "summary": "cgroup memory.high 上限;超过会同步回收该组内存直至回到 high 之下,O_NONBLOCK 时跳过回收。"
+    },
+    {
+      "kernel_name": "memory_max_write",
+      "category": "tunable",
+      "summary": "cgroup memory.max 硬上限;超过触发 OOM(回收失败后调用 mem_cgroup_out_of_memory)。"
+    },
+    {
+      "kernel_name": "memory_events_show",
+      "category": "readonly",
+      "summary": "cgroup 累计事件计数(low/high/max/oom/oom_kill/oom_group_kill/sock_throttled);读判断是否触过限。"
+    },
+    {
+      "kernel_name": "memory_events_local_show",
+      "category": "readonly",
+      "summary": "cgroup 自身(不含子组)事件计数;读 events.local 用于定位哪个子组触限。"
+    },
+    {
+      "kernel_name": "memory_stat_show",
+      "category": "readonly",
+      "summary": "cgroup 详细统计(anon/file/slab/pgfault/pglazyfree 等);读 stat 用于配额与回收分析。"
+    },
+    {
+      "kernel_name": "memory_numa_stat_show",
+      "category": "readonly",
+      "summary": "cgroup 各 NUMA node 的内存分布(anon/file per node);读 numa_stat 定位内存跨 node 程度。"
+    },
+    {
+      "kernel_name": "memory_oom_group_write",
+      "category": "tunable",
+      "summary": "cgroup oom.group(0/1);1=OOM 时整组一起杀而非单进程,适合批处理隔离。"
+    },
+    {
+      "kernel_name": "memory_reclaim",
+      "category": "tunable",
+      "summary": "只写触发型,echo <bytes> 让该 cgroup 主动回收指定字节数;用于压力测试与人工回收。"
+    },
+    {
+      "kernel_name": "swap_current_read",
+      "category": "readonly",
+      "summary": "cgroup 当前 swap 用量(字节),读 swap.current;配 swap.max 判断是否触限。"
+    },
+    {
+      "kernel_name": "swap_high_write",
+      "category": "tunable",
+      "summary": "cgroup swap.high 软上限(bytes,'max'=不限);超过会限速而非直接 OOM。"
+    },
+    {
+      "kernel_name": "swap_max_write",
+      "category": "tunable",
+      "summary": "cgroup swap.max 硬上限(bytes,'max'=不限);超过则拒绝 swap 写,可能触发 OOM。"
+    },
+    {
+      "kernel_name": "swap_peak_write",
+      "category": "tunable",
+      "summary": "cgroup swap 峰值(swap.peak)管理;写任意值重置,读返回自上次重置以来 swap.current 的最大值。"
+    },
+    {
+      "kernel_name": "swap_events_show",
+      "category": "readonly",
+      "summary": "cgroup swap 事件计数(high/max);读判断 swap 是否触过限。"
+    },
+    {
+      "kernel_name": "zswap_current_read",
+      "category": "readonly",
+      "summary": "cgroup zswap 压缩缓存当前用量(字节),读 zswap.current;配 zswap.max 判断压缩池上限。"
+    },
+    {
+      "kernel_name": "zswap_max_write",
+      "category": "tunable",
+      "summary": "cgroup zswap.max 上限(bytes,'max'=不限);超过则 zswap 写回 swap 而非继续压缩。"
+    },
+    {
+      "kernel_name": "zswap_writeback_write",
+      "category": "tunable",
+      "summary": "cgroup zswap.writeback 开关(0/1);1=允许在 zswap 满时回写 swap,0=禁用回写。"
+    },
+    {
+      "kernel_name": "fragmentation_op",
+      "category": "readonly",
+      "summary": "/proc/buddyinfo:每节点每zone每order的空闲页块数;诊断外部碎片,看高 order 是否还有可分配大块。"
+    },
+    {
+      "kernel_name": "pagetypeinfo_op",
+      "category": "readonly",
+      "summary": "/proc/pagetypeinfo:每节点每zone每migratetype每order的空闲块数;诊断迁移类型碎片化(如 movable 是否被污染)。"
+    },
+    {
+      "kernel_name": "vmstat_op",
+      "category": "readonly",
+      "summary": "/proc/vmstat:全局/zone 内存与回收统计事件计数;读 pgmajfault/pgsteal_kswapd/pgalloc 等,做回收效率与压力分析。"
+    },
+    {
+      "kernel_name": "zoneinfo_op",
+      "category": "readonly",
+      "summary": "/proc/zoneinfo:每zone的尺寸/水位/lowmem_reserve/per-cpu batch 等;调 watermarks/lowmem_reserve 的依据。"
+    },
+    {
+      "kernel_name": "proc_pid_maps_operations",
+      "category": "readonly",
+      "summary": "/proc/<pid>/maps 行式列出该进程 VMA 列表;每行 = 一段 [start-end perms offset dev inode pathname];判断进程布局/碎片化的基础。"
+    },
+    {
+      "kernel_name": "proc_pid_numa_maps_operations",
+      "category": "readonly",
+      "summary": "/proc/<pid>/numa_maps:每 VMA 的 NUMA 页分布(N0/N1... total=used=);诊断进程内存是否跨 node,决定是否开 zone_reclaim/numa_balancing。"
+    },
+    {
+      "kernel_name": "proc_mem_operations",
+      "category": "tunable",
+      "summary": "/proc/<pid>/mem:进程虚拟内存的读写接口(需CAP_SYS_PTRACE);用于 ptrace 注入/patch,属工具接口非调参。"
+    },
+    {
+      "kernel_name": "proc_clear_refs_operations",
+      "category": "tunable",
+      "summary": "/proc/<pid>/clear_refs:只写,1-5 选枚举清 RSS-Referenced/Anon/Mapped/SoftDirty/MM_HIWATER_RSS;用于重置访问位后做 workingset 采样。"
+    },
+    {
+      "kernel_name": "proc_pid_smaps_operations",
+      "category": "readonly",
+      "summary": "/proc/<pid>/smaps:每 VMA 的详细 RSS/PSS/Anonymous/Swap/Private_bytes 等;诊断进程内存占用与共享程度。"
+    },
+    {
+      "kernel_name": "proc_pid_smaps_rollup_operations",
+      "category": "readonly",
+      "summary": "/proc/<pid>/smaps_rollup:整个进程的 smaps 汇总(单条),Pss/Rss 等聚合值;快速看进程内存总量。"
+    },
+    {
+      "kernel_name": "proc_pagemap_operations",
+      "category": "readonly",
+      "summary": "/proc/<pid>/pagemap:每页一位的物理页帧/存在/swap/soft-dirty 位图;做精确 workingset 与内存映射分析。"
+    },
+    {
+      "kernel_name": "proc_oom_score",
+      "category": "readonly",
+      "summary": "/proc/<pid>/oom_score:OOM killer 给该进程的分数(0-1000线性映射);越高越可能被杀,看 oom_score_adj 调整依据。"
+    },
+    {
+      "kernel_name": "setup_transparent_hugepage",
+      "category": "tunable",
+      "summary": "cmdline transparent_hugepage=always|madvise|never;boot 时设 THP anon 全局策略位。"
+    },
+    {
+      "kernel_name": "setup_thp_anon",
+      "category": "tunable",
+      "summary": "cmdline thp_anon=<order>[:always|madvise|inherit|never];按 page size 精细配置 anon THP 各 order 的策略位图。"
+    },
+    {
+      "kernel_name": "setup_numabalancing",
+      "category": "tunable",
+      "summary": "cmdline numa_balancing=enable|disable;覆盖运行时 NUMA balancing 默认开关,优先级高于 sysctl numa_balancing。"
+    },
+    {
+      "kernel_name": "setup_memhp_default_state",
+      "category": "tunable",
+      "summary": "cmdline memhp_default_state=offline|online|online_kernel|online_movable;hotplug 内存默认 onlining 类型。"
+    },
+    {
+      "kernel_name": "hugepage_alloc_threads_setup",
+      "category": "tunable",
+      "summary": "cmdline hugepage_alloc_threads=N;boot 时分配 hugepage 用的并行线程数,默认=num_online_cpus()/4;影响 boot 时大页分配速度。"
+    },
+    {
+      "kernel_name": "reserve_mem",
+      "category": "tunable",
+      "summary": "cmdline reserve_mem=<size>:<align>:<name>;boot 期间 memblock 预留一块专用内存(供 driver/feature 用),最多 RESERVE_MEM_MAX_ENTRIES 项。"
+    },
+    {
+      "kernel_name": "setup_swap_account",
+      "category": "tunable",
+      "summary": "cmdline swapaccount=0|1;已废弃(仅警告),swap cgroup 控制现在通过 cgroupfs 配置,该参数保留兼容性。"
+    },
+    {
+      "kernel_name": "cgroup_memory",
+      "category": "tunable",
+      "summary": "cmdline cgroup.memory=nosocket|nokmem|nobpf(可逗号组合);禁用 memcg 对应子控制器(socket/kmem/bpf)的记账,减少开销。"
+    },
+    {
+      "kernel_name": "cmdline_parse_stack_guard_gap",
+      "category": "tunable",
+      "summary": "cmdline stack_guard_gap=<pages>;栈与其他映射的最小保护间隙(单位页,默认256页=1MB),防栈溢出污染邻居。"
+    },
+    {
+      "kernel_name": "set_hashdist",
+      "category": "tunable",
+      "summary": "cmdline hashdist=0|1;是否把 hash 表分散到各 NUMA node(0=集中,1=分布,默认=IS_ENABLED(CONFIG_64BIT));单 node 自动关掉。"
+    },
+    {
+      "kernel_name": "disable_randmaps",
+      "category": "tunable",
+      "summary": "cmdline norandmaps(无参);关闭 mmap 随机化(等价 randomize_va_space=0),用于调试或地址固定的旧二进制。"
+    },
+    {
+      "kernel_name": "setup_slab_nomerge",
+      "category": "tunable",
+      "summary": "cmdline slab_nomerge(无参);强制 slab 不合并,便于排查每个 cache 的内存占用,代价是 slab 元数据开销变大。"
+    },
+    {
+      "kernel_name": "setup_slab_merge",
+      "category": "tunable",
+      "summary": "cmdline slab_merge(无参);允许 slab 合并(默认行为,与 CONFIG_SLAB_MERGE_DEFAULT 一致),减小元数据开销。"
+    },
+    {
+      "kernel_name": "setup_transparent_hugepage_shmem",
+      "category": "tunable",
+      "summary": "cmdline transparent_hugepage_shmem=never|always|within_size|advise|deny|force;设 shmem THP 全局策略。"
+    },
+    {
+      "kernel_name": "setup_thp_shmem",
+      "category": "tunable",
+      "summary": "cmdline thp_shmem=<order>[:always|advise|inherit|within_size|never];按 page size 精细配置 shmem THP 各 order 的策略位图。"
+    }
+  ]
+}

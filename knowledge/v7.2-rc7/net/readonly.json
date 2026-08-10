@@ -1,0 +1,35 @@
+{
+  "module": "net",
+  "version": "v7.2-rc7",
+  "_doc": "net 模块只读观测项。这些参数路径在 sysctl/proc 表里 mode=0444 或虽 0644 但 handler 仅用于只读列表。消费者读它们做诊断。",
+  "items": [
+    {
+      "name": "netdev_rss_key",
+      "kernel_name": "netdev_rss_key",
+      "path": "/proc/sys/net/core/netdev_rss_key",
+      "category": "readonly",
+      "gate": "",
+      "summary": "网卡自动生成的 RSS 密钥（hex 串）。驱动启动时随机初始化，read-only，不可写。",
+      "use": "读 hex 串核对当前 RSS 密钥。用于：(1) 验证 RSS 密钥是否随机化（防预测攻击）；(2) 配合 ethtool -x 计算 RSS flow 到 queue 的映射，分析流量在 RX queue 间分布；(3) 对比多机 RSS 密钥一致性做负载分担分析。"
+    },
+    {
+      "name": "tcp_available_ulp",
+      "kernel_name": "proc_tcp_available_ulp",
+      "path": "/proc/sys/net/ipv4/tcp_available_ulp",
+      "category": "readonly",
+      "gate": "",
+      "summary": "当前内核注册的可用 TCP ULP（Upper Layer Protocol）列表字符串（如 uplink/mptcp）。mode=0444 不可写。",
+      "use": "读字符串列表确认本机支持哪些 TCP ULP。诊断：(1) 应用 setsockopt(TCP_ULP) 失败时核对名称是否在此列表；(2) 确认 mptcp 是否注册可用。具体可用名称受 CONFIG_MPTCP 等编译开关影响。"
+    },
+    {
+      "name": "softnet_stat",
+      "kernel_name": "softnet_seq_ops",
+      "path": "/proc/net/softnet_stat",
+      "category": "readonly",
+      "gate": "",
+      "summary": "Per-CPU 网络收包统计，15 列 hex。字段：processed/dropped/time_squeeze/0/0/0/0/0/0/received_rps/flow_limit_count/(input_qlen+process_qlen)/cpu_id/input_qlen/process_qlen。mode=0444。",
+      "use": "读 per-CPU 收包诊断。关键判读：(1) 第 2 列 dropped > 0 → Per-CPU backlog 满（netdev_max_backlog 过低或 NAPI 跟不上）；(2) 第 3 列 time_squeeze > 0 → NAPI 因预算（netdev_budget/netdev_budget_usecs）退出而非空（需调大预算或 weight）；(3) 第 10 列 received_rps > 0 → RPS 正在工作（其他 CPU 帮忙处理）；(4) 第 11 列 flow_limit_count > 0 → flow limit 触发（单流暴增）；(5) 第 13 列 cpu_id 用于定位是哪个 CPU 的统计行；(6) 第 14/15 列 input_qlen/process_qlen 揭示 backlog 当前深度。多行分别对应不同 CPU（按在线 CPU 顺序）。",
+      "per_cpu": true
+    }
+  ]
+}

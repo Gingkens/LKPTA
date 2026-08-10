@@ -1,0 +1,1522 @@
+{
+  "module": "net",
+  "version": "v7.2-rc7",
+  "_doc": "net 模块可调参数完整记录。每条从 v7.2-rc7 源码读出。涉及 net/core/sysctl_net_core.c:net_core_table、net/ipv4/sysctl_net_ipv4.c:ipv4_table、net/ipv6/sysctl_net_ipv6.c:ipv6_table_template、net/core/netclassid_cgroup.c:ss_files 及四个 cmdline __setup。cmdline 类参数标 boot_only:true。",
+  "items": [
+    {
+      "name": "mem_pcpu_rsv",
+      "kernel_name": "net_hotdata.sysctl_mem_pcpu_rsv",
+      "path": "/proc/sys/net/core/mem_pcpu_rsv",
+      "category": "tunable",
+      "gate": "",
+      "unit": "pages",
+      "default": 256,
+      "range": { "min": 256 },
+      "summary": "每个 CPU 为 socket 内存预留的页数（per-cpu reserve），防止 per-cpu 内存压力下 socket 池耗尽。默认 SK_MEMORY_PCPU_RESERVE = 1 << (20 - PAGE_SHIFT)，4KB 页下 = 256。",
+      "when_to_increase": ["socket 数量极高 per-cpu 内存压力", "短时大量 inet socket 创建被内存限速"],
+      "when_to_decrease": ["内存紧张想从 socket 池回收给通用页"],
+      "increasing": {
+        "good_for": ["提升 per-cpu socket 内存余量", "降低短时高并发 socket 创建被限的概率"],
+        "bad_for": ["占用更多不可换出内存", "减少其他子系统能用的页"]
+      },
+      "decreasing": {
+        "good_for": ["把内存还给通用页池", "缓解总内存压力"],
+        "bad_for": ["加剧 per-cpu socket 内存压力", "短时高并发 socket 创建更易触发内存限速"]
+      },
+      "consumes": ["include/net/proto_memory.h:9", "net/core/hotdata.c:25"],
+      "version_notes": "默认 SK_MEMORY_PCPU_RESERVE 在 4KB 页下=256；其他页大小按 1<<(20-PAGE_SHIFT) 计算。min_mem_pcpu_rsv=SK_MEMORY_PCPU_RESERVE 即下限=默认值。"
+    },
+    {
+      "name": "dev_weight",
+      "kernel_name": "weight_p",
+      "path": "/proc/sys/net/core/dev_weight",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 64,
+      "range": { "min": 1 },
+      "summary": "softirq NAPI 一次轮询处理包数基准（dev_weight，默认 64）。dev_rx_weight = dev_weight * dev_weight_rx_bias、dev_tx_weight = dev_weight * dev_weight_tx_bias。改写会同步重算 rx/tx。",
+      "when_to_increase": ["softirq 频繁但每次处理量小、NAPI 退出后 backlog 仍有积压", "高 PPS 场景想降低 NAPI 调度频次"],
+      "when_to_decrease": ["softirq 占用 CPU 过高、抢占其他任务", "想要更细粒度的公平调度"],
+      "increasing": {
+        "good_for": ["提升每次 NAPI 轮询的处理量", "降低 NAPI 调度频次"],
+        "bad_for": ["加剧单次 softirq CPU 占用", "延迟 softirq 退出和后续软中断响应"]
+      },
+      "decreasing": {
+        "good_for": ["降低单次 softirq CPU 占用", "缩短 softirq 持续时间"],
+        "bad_for": ["减少每次 NAPI 处理量", "加剧 backlog 积压与 drops"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:proc_do_dev_weight", "net/core/dev.c:13282", "net/core/dev.c:4960"],
+      "version_notes": "rx/tx bias 改变后也会通过 proc_do_dev_weight 互斥锁同步重算 net_hotdata.dev_rx_weight/dev_tx_weight。"
+    },
+    {
+      "name": "dev_weight_rx_bias",
+      "kernel_name": "dev_weight_rx_bias",
+      "path": "/proc/sys/net/core/dev_weight_rx_bias",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ratio",
+      "default": 1,
+      "range": { "min": 1 },
+      "summary": "收方向 dev_weight 偏置系数（默认 1）。dev_rx_weight = dev_weight * rx_bias，决定单次 NAPI 收包配额相对基准的倍数。",
+      "when_to_increase": ["收方向 PPS 远高于发方向，需要更激进的接收处理", "softnet_stat 显示 time_squeeze 高但发不拥塞"],
+      "when_to_decrease": ["收方向 softirq 占用过多 CPU，发方向更紧迫", "想相对降低收配额"],
+      "increasing": {
+        "good_for": ["放大收方向 NAPI 配额", "提升高 PPS 接收处理量"],
+        "bad_for": ["加剧收方向 softirq CPU 占用", "挤压发方向 CPU 配额"]
+      },
+      "decreasing": {
+        "good_for": ["缩小收方向 NAPI 配额", "把 CPU 让给发方向"],
+        "bad_for": ["降低接收吞吐", "加剧 backlog 积压与 drops"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:proc_do_dev_weight", "net/core/dev.c:4961", "net/core/dev.c:13282"]
+    },
+    {
+      "name": "dev_weight_tx_bias",
+      "kernel_name": "dev_weight_tx_bias",
+      "path": "/proc/sys/net/core/dev_weight_tx_bias",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ratio",
+      "default": 1,
+      "range": { "min": 1 },
+      "summary": "发方向 dev_weight 偏置系数（默认 1）。dev_tx_weight = dev_weight * tx_bias，决定单次 qdisc 输出配额。",
+      "when_to_increase": ["发方向 PPS 远高于收方向，qdisc 输出队列拥塞", "TX softirq 频繁但每次输出量小"],
+      "when_to_decrease": ["发方向 softirq 占用过多 CPU", "想相对降低发配额"],
+      "increasing": {
+        "good_for": ["放大发方向输出配额", "提升 qdisc 出队吞吐"],
+        "bad_for": ["加剧发方向 softirq CPU 占用", "挤压收方向 CPU 配额"]
+      },
+      "decreasing": {
+        "good_for": ["缩小发方向输出配额", "把 CPU 让给收方向"],
+        "bad_for": ["降低发方向吞吐", "加剧 qdisc 队列堆积"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:proc_do_dev_weight", "net/core/dev.c:4962", "net/core/dev.c:13282"]
+    },
+    {
+      "name": "netdev_max_backlog",
+      "kernel_name": "net_hotdata.max_backlog",
+      "path": "/proc/sys/net/core/netdev_max_backlog",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 1000,
+      "range": {},
+      "summary": "Per-CPU softirq backlog（input_pkt_queue）最大长度（默认 1000）。超过后入队被丢包并计入 softnet_stat 的 dropped 列。",
+      "when_to_increase": ["softnet_stat 第二列 dropped 高", "高 PPS 短时尖峰被 backlog 限速"],
+      "when_to_decrease": ["想更早丢包做拥塞控制", "缓解 backlog 占内存"],
+      "increasing": {
+        "good_for": ["提升 backlog 容量", "降低短时尖峰 drop 概率"],
+        "bad_for": ["加剧内存占用", "掩盖真实的拥塞信号"]
+      },
+      "decreasing": {
+        "good_for": ["更早暴露拥塞", "降低 backlog 内存占用"],
+        "bad_for": ["加剧 backlog drop", "降低短时尖峰吸收能力"]
+      },
+      "consumes": ["net/core/dev.c:enqueue_to_backlog", "net/core/hotdata.c:19"]
+    },
+    {
+      "name": "qdisc_max_burst",
+      "kernel_name": "net_hotdata.qdisc_max_burst",
+      "path": "/proc/sys/net/core/qdisc_max_burst",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 1000,
+      "range": {},
+      "summary": "qdisc 一次出队（dequeue）突发上限（默认 1000），影响 NET_TX softirq 一次发多少包。",
+      "when_to_increase": ["TX 软中断频繁但每次出队少", "qdisc 队列堆积"],
+      "when_to_decrease": ["TX 软中断占用 CPU 过多", "想要更细粒度 TX 公平"],
+      "increasing": {
+        "good_for": ["放大单次 qdisc 出队批量", "降低 TX 软中断调度频次"],
+        "bad_for": ["加剧单次 TX 软中断 CPU 占用", "延迟 TX 公平调度"]
+      },
+      "decreasing": {
+        "good_for": ["缩短单次 TX 软中断 CPU 占用", "更细粒度 TX 公平"],
+        "bad_for": ["减少 qdisc 出队批量", "加剧 qdisc 队列堆积"]
+      },
+      "consumes": ["net/core/dev.c:net_tx_action", "net/core/hotdata.c:20"]
+    },
+    {
+      "name": "bpf_jit_enable",
+      "kernel_name": "bpf_jit_enable",
+      "path": "/proc/sys/net/core/bpf_jit_enable",
+      "category": "tunable",
+      "gate": "CONFIG_BPF_JIT",
+      "unit": "enum: 0|1|2",
+      "default": 0,
+      "range": { "min": 0, "max": 2, "special": { "0": "禁用 JIT", "1": "启用 JIT（生产推荐）", "2": "启用 JIT + 调试导出（生产禁用，仅 JIT 调试用）" } },
+      "summary": "BPF JIT 编译总开关。2 会让内核 pr_warn 警告切勿生产用。CONFIG_BPF_JIT_ALWAYS_ON 时 min=max=1 永久锁定。",
+      "when_to_increase": ["BPF 程序解释执行开销大", "高频 cgroup/sock_filter 触发"],
+      "when_to_decrease": ["JIT 镜像内存吃紧", "需要审计 BPF 不希望其变可执行"],
+      "increasing": {
+        "good_for": ["提升 BPF 程序执行性能", "降低 BPF 解释器开销"],
+        "bad_for": ["加剧 JIT 镜像可执行内存占用", "扩大 JIT 攻击面"]
+      },
+      "decreasing": {
+        "good_for": ["减少 JIT 可执行内存占用", "缩小 BPF JIT 攻击面"],
+        "bad_for": ["退化为 BPF 解释器执行", "降低 BPF 程序性能"]
+      },
+      "consumes": ["kernel/bpf/core.c:548", "net/core/sysctl_net_core.c:proc_dointvec_minmax_bpf_enable"],
+      "version_notes": "默认 IS_BUILTIN(CONFIG_BPF_JIT_DEFAULT_ON)，多数发行版=0。bpf_jit_enable=2 会触发 pr_warn。CAP_SYS_ADMIN 才能写。"
+    },
+    {
+      "name": "bpf_jit_harden",
+      "kernel_name": "bpf_jit_harden",
+      "path": "/proc/sys/net/core/bpf_jit_harden",
+      "category": "tunable",
+      "gate": "CONFIG_BPF_JIT CONFIG_HAVE_EBPF_JIT",
+      "unit": "enum: 0|1|2",
+      "default": 0,
+      "range": { "min": 0, "max": 2, "special": { "0": "禁用加固", "1": "常量盲化", "2": "常量盲化+指针混淆" } },
+      "summary": "BPF JIT 加固级别。1=常量盲化（防侧信道泄漏立即数）、2=还混淆指针（防内核指针泄漏）。",
+      "when_to_increase": ["多租户/不信任的 BPF 程序", "侧信道/指针泄漏攻击面担忧"],
+      "when_to_decrease": ["可信单租户想最大化 JIT 性能", "加固开销占比高"],
+      "increasing": {
+        "good_for": ["提升 BPF JIT 安全性", "减少侧信道/指针泄漏风险"],
+        "bad_for": ["增加 JIT 运行时开销", "降低 BPF 程序性能"]
+      },
+      "decreasing": {
+        "good_for": ["降低 JIT 运行时开销", "提升 BPF 性能"],
+        "bad_for": ["放大侧信道与指针泄漏风险"]
+      },
+      "consumes": ["kernel/bpf/core.c:550", "net/core/sysctl_net_core.c:proc_dointvec_minmax_bpf_restricted"],
+      "version_notes": "默认 0；CAP_SYS_ADMIN 才能写。"
+    },
+    {
+      "name": "bpf_jit_kallsyms",
+      "kernel_name": "bpf_jit_kallsyms",
+      "path": "/proc/sys/net/core/bpf_jit_kallsyms",
+      "category": "tunable",
+      "gate": "CONFIG_BPF_JIT CONFIG_HAVE_EBPF_JIT",
+      "unit": "enum: 0|1",
+      "default": 0,
+      "range": { "min": 0, "max": 1 },
+      "summary": "是否让 BPF JIT 镜像出现在 /proc/kallsyms 中（1=显示）。便于排错但泄漏内核地址。",
+      "when_to_increase": ["调试 BPF JIT 程序需要符号"],
+      "when_to_decrease": ["生产环境防 kallsyms 地址泄漏"],
+      "increasing": {
+        "good_for": ["便于 BPF JIT 调试", "在 /proc/kallsyms 看到 JIT 符号"],
+        "bad_for": ["放大内核地址泄漏面"]
+      },
+      "decreasing": {
+        "good_for": ["降低内核地址泄漏面"],
+        "bad_for": ["加剧 BPF JIT 调试难度"]
+      },
+      "consumes": ["kernel/bpf/core.c:549", "net/core/sysctl_net_core.c:proc_dointvec_minmax_bpf_restricted"],
+      "version_notes": "默认 IS_BUILTIN(CONFIG_BPF_JIT_DEFAULT_ON)。CAP_SYS_ADMIN 才能写。"
+    },
+    {
+      "name": "bpf_jit_limit",
+      "kernel_name": "bpf_jit_limit",
+      "path": "/proc/sys/net/core/bpf_jit_limit",
+      "category": "tunable",
+      "gate": "CONFIG_BPF_JIT",
+      "unit": "bytes",
+      "default": "min(bpf_jit_limit_max >> 1, round_up(bpf_jit_limit_max/8))",
+      "range": { "min": 0, "max": "bpf_jit_limit_max" },
+      "summary": "BPF JIT 镜像可分配的内核可执行内存总上限（字节）。默认取 limit_max 一半与 1/8 上取整中较小者。",
+      "when_to_increase": ["大量 BPF 程序需 JIT", "JIT 内存不足导致 BPF 加载失败"],
+      "when_to_decrease": ["可执行内存配额紧张", "想限制 BPF 攻击面"],
+      "increasing": {
+        "good_for": ["放宽 BPF JIT 内存上限", "支持更多 BPF 程序加载"],
+        "bad_for": ["加剧内核可执行内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["收紧 BPF JIT 内存上限", "缩小 BPF 攻击面"],
+        "bad_for": ["加剧 BPF 程序加载失败", "限制可加载 BPF 程序数量"]
+      },
+      "consumes": ["kernel/bpf/core.c:551", "kernel/bpf/core.c:1094", "kernel/bpf/core.c:1095"],
+      "version_notes": "extra2 = &bpf_jit_limit_max（运行时由 bpf_jit_alloc_exec_limit 决定，arch 相关）。CAP_SYS_ADMIN 才能写。"
+    },
+    {
+      "name": "netdev_tstamp_prequeue",
+      "kernel_name": "net_hotdata.tstamp_prequeue",
+      "path": "/proc/sys/net/core/netdev_tstamp_prequeue",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 1,
+      "range": {},
+      "summary": "是否在 softirq 入队时就打接收时间戳（默认 1=入队即打）。0=延后到 skb 被处理时再打，可能引入时间偏差。",
+      "when_to_increase": ["需要精确接收时间戳（如 PTP/低延迟测量）"],
+      "when_to_decrease": ["时间戳开销占比高、可容忍轻微时间偏差"],
+      "increasing": {
+        "good_for": ["提升接收时间戳精度", "降低时间戳延迟抖动"],
+        "bad_for": ["增加 softirq 入队路径开销"]
+      },
+      "decreasing": {
+        "good_for": ["降低 softirq 入队路径开销"],
+        "bad_for": ["加剧接收时间戳延迟", "时间戳精度下降"]
+      },
+      "consumes": ["net/core/dev.c:netif_rx_internal", "net/core/hotdata.c:18"]
+    },
+    {
+      "name": "message_cost",
+      "kernel_name": "net_ratelimit_state.interval",
+      "path": "/proc/sys/net/core/message_cost",
+      "category": "tunable",
+      "gate": "",
+      "unit": "jiffies",
+      "default": 5,
+      "range": {},
+      "summary": "网络告警消息限速周期（jiffies，默认 5*HZ=5s）。与 message_burst 配对控制内核网络子系统警告频率。",
+      "when_to_increase": ["告警太频繁想降低频率"],
+      "when_to_decrease": ["希望更及时看到告警"],
+      "increasing": {
+        "good_for": ["降低告警频率", "减少日志噪声"],
+        "bad_for": ["加剧告警延迟", "可能错过早期异常信号"]
+      },
+      "decreasing": {
+        "good_for": ["提升告警时效", "更及时暴露网络异常"],
+        "bad_for": ["加剧日志噪声", "可能刷爆日志"]
+      },
+      "consumes": ["net/core/utils.c:35", "net/core/utils.c:__ratelimit"],
+      "version_notes": "默认 DEFINE_RATELIMIT_STATE(net_ratelimit_state, 5*HZ, 10)；interval 单位 jiffies 由 proc_dointvec_jiffies 处理。"
+    },
+    {
+      "name": "message_burst",
+      "kernel_name": "net_ratelimit_state.burst",
+      "path": "/proc/sys/net/core/message_burst",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 10,
+      "range": {},
+      "summary": "网络告警限速窗口内允许的突发条数（默认 10）。与 message_cost 配对。",
+      "when_to_increase": ["想看到更多突发告警", "短时尖峰告警被丢弃"],
+      "when_to_decrease": ["告警太多想限制突发量"],
+      "increasing": {
+        "good_for": ["放大允许的告警突发量", "降低告警被限速概率"],
+        "bad_for": ["加剧日志噪声"]
+      },
+      "decreasing": {
+        "good_for": ["限制告警突发量", "降低日志噪声"],
+        "bad_for": ["加剧告警被限速丢弃"]
+      },
+      "consumes": ["net/core/utils.c:35", "net/core/utils.c:__ratelimit"]
+    },
+    {
+      "name": "rps_sock_flow_entries",
+      "kernel_name": "rps_sock_flow_sysctl",
+      "path": "/proc/sys/net/core/rps_sock_flow_entries",
+      "category": "tunable",
+      "gate": "CONFIG_RPS",
+      "unit": "count",
+      "default": 0,
+      "range": { "min": 0, "max": 536870912 },
+      "summary": "全局 RPS socket flow table 槽数（向上取整到 2 的幂，封顶 1<<29）。0=禁用 RFS。决定软中断到 socket 的流映射粒度。",
+      "when_to_increase": ["多 CPU 接收希望按流分发到 socket 所在 CPU", "RPS 启用但 RFS 未配置"],
+      "when_to_decrease": ["RFS 表内存吃紧", "想关闭 RFS"],
+      "increasing": {
+        "good_for": ["提升 RFS 流映射精度", "更好按流分发到 socket CPU"],
+        "bad_for": ["加剧 RFS 表内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["降低 RFS 表内存占用"],
+        "bad_for": ["降低 RFS 流映射精度", "削弱跨 CPU 流分发效果"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:rps_sock_flow_sysctl", "net/core/dev.c:rss_queue_process"],
+      "version_notes": "写时会 vmalloc 重排并 static_branch_inc/dec rps_needed/rfs_needed；写 0 即关闭。>1<<29 返回 -EINVAL。"
+    },
+    {
+      "name": "flow_limit_cpu_bitmap",
+      "kernel_name": "flow_limit_cpu_sysctl",
+      "path": "/proc/sys/net/core/flow_limit_cpu_bitmap",
+      "category": "tunable",
+      "gate": "CONFIG_NET_FLOW_LIMIT",
+      "unit": "bitmap",
+      "default": "0（全 0，所有 CPU 关闭 flow limit）",
+      "range": {},
+      "summary": "per-CPU flow limit 启用位图（cpumask hex）。为某 CPU 置位则该 CPU 分配 sd_flow_limit 哈希桶，对单流暴增做限速。",
+      "when_to_increase": ["某些 CPU 单流 PPS 暴增拖慢 softirq", "softnet_stat flow_limit_count 高且想启 flow limit"],
+      "when_to_decrease": ["关闭 flow limit", "flow limit 误伤了正常单流"],
+      "increasing": {
+        "good_for": ["开启更多 CPU 的 flow limit", "抑制单流暴增拖慢 softirq"],
+        "bad_for": ["加剧 per-CPU 哈希桶内存占用", "可能误限正常高带宽单流"]
+      },
+      "decreasing": {
+        "good_for": ["关闭部分 CPU 的 flow limit", "降低哈希桶内存占用"],
+        "bad_for": ["加剧单流暴增影响 softirq"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:flow_limit_cpu_sysctl", "net/core/dev.c:skb_flow_limit"]
+    },
+    {
+      "name": "flow_limit_table_len",
+      "kernel_name": "netdev_flow_limit_table_len",
+      "path": "/proc/sys/net/core/flow_limit_table_len",
+      "category": "tunable",
+      "gate": "CONFIG_NET_FLOW_LIMIT",
+      "unit": "count",
+      "default": 4096,
+      "range": {},
+      "summary": "per-CPU flow limit 哈希桶数（默认 1<<12=4096）。必须是 2 的幂，否则写回滚报 -EINVAL。",
+      "when_to_increase": ["flow_limit_cpu_bitmap 启用且 CPU 多、流也多", "现有桶数冲突率高"],
+      "when_to_decrease": ["flow limit 表内存吃紧", "桶利用率低"],
+      "increasing": {
+        "good_for": ["降低 flow limit 哈希冲突", "提升限速精度"],
+        "bad_for": ["加剧 per-CPU 哈希桶内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["降低 flow limit 哈希桶内存占用"],
+        "bad_for": ["加剧哈希冲突", "降低限速精度"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:flow_limit_table_len_sysctl", "net/core/dev.c:5336"],
+      "version_notes": "默认 (1<<12)=4096；写入非 2 的幂会回滚 old 并返回 -EINVAL。改后只对新分配的 sd_flow_limit 生效。"
+    },
+    {
+      "name": "busy_poll",
+      "kernel_name": "sysctl_net_busy_poll",
+      "path": "/proc/sys/net/core/busy_poll",
+      "category": "tunable",
+      "gate": "CONFIG_NET_RX_BUSY_POLL",
+      "unit": "us",
+      "default": 0,
+      "range": { "min": 0 },
+      "summary": "socket 全局 busy poll 默认时长（us，默认 0=禁用）。>0 时 select/poll/epoll 阻塞期间会轮询网卡 NAPI 避免软中断。",
+      "when_to_increase": ["延迟敏感网络应用想避免软中断唤醒", "CPU 富余可承担 busy poll"],
+      "when_to_decrease": ["CPU 紧张 busy poll 占用过多", "延迟要求宽松"],
+      "increasing": {
+        "good_for": ["降低网络接收延迟", "减少软中断上下文切换"],
+        "bad_for": ["加剧 CPU 占用", "加剧电量消耗"]
+      },
+      "decreasing": {
+        "good_for": ["降低 busy poll CPU 占用", "省电"],
+        "bad_for": ["加剧网络接收延迟", "增加软中断上下文切换"]
+      },
+      "consumes": ["net/socket.c:118", "include/net/busy_poll.h:42", "include/net/busy_poll.h:89"]
+    },
+    {
+      "name": "busy_read",
+      "kernel_name": "sysctl_net_busy_read",
+      "path": "/proc/sys/net/core/busy_read",
+      "category": "tunable",
+      "gate": "CONFIG_NET_RX_BUSY_POLL",
+      "unit": "us",
+      "default": 0,
+      "range": { "min": 0 },
+      "summary": "新建 socket sk_ll_usec 默认值（us，默认 0=禁用）。阻塞读时按此时长 busy-poll 网卡 NAPI。",
+      "when_to_increase": ["单 socket 阻塞读延迟敏感", "希望每 socket 默认开 busy poll"],
+      "when_to_decrease": ["busy read CPU 占用过多", "应用已自管 polling"],
+      "increasing": {
+        "good_for": ["降低单 socket 阻塞读延迟"],
+        "bad_for": ["加剧每 socket CPU 占用"]
+      },
+      "decreasing": {
+        "good_for": ["降低 busy read CPU 占用"],
+        "bad_for": ["加剧单 socket 阻塞读延迟"]
+      },
+      "consumes": ["net/socket.c:117", "net/core/sock.c:3795"]
+    },
+    {
+      "name": "default_qdisc",
+      "kernel_name": "set_default_qdisc",
+      "path": "/proc/sys/net/core/default_qdisc",
+      "category": "tunable",
+      "gate": "CONFIG_NET_SCHED",
+      "unit": "enum: <qdisc 名称字符串>",
+      "default": "fq_codel（取决于编译默认）",
+      "range": {},
+      "summary": "新建网卡默认 root qdisc 名称。改写后影响之后创建的 netdev，已存在网卡不改。",
+      "when_to_increase": ["想换 qdisc 默认（如 fq_codel→bfifo/mq）"],
+      "when_to_decrease": ["恢复默认 qdisc"],
+      "increasing": {
+        "good_for": ["(无单调性,切换默认 qdisc)"],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": ["(无单调性,切换默认 qdisc)"],
+        "bad_for": []
+      },
+      "consumes": ["net/core/sysctl_net_core.c:set_default_qdisc", "net/sched/sch_generic.c:qdisc_get_default"],
+      "version_notes": "非数值参数；通过 qdisc_set_default 校验 qdisc 是否注册。"
+    },
+    {
+      "name": "netdev_budget",
+      "kernel_name": "net_hotdata.netdev_budget",
+      "path": "/proc/sys/net/core/netdev_budget",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 300,
+      "range": {},
+      "summary": "softirq NAPI 一次轮询处理包数预算（默认 300）。与 netdev_budget_usecs 共同决定 NAPI 何时退出。",
+      "when_to_increase": ["softnet_stat 显示 time_squeeze 高（按预算退出）", "高 PPS 场景想降低 NAPI 调度频次"],
+      "when_to_decrease": ["softirq 占 CPU 过多", "想要更细 NAPI 公平"],
+      "increasing": {
+        "good_for": ["放大每次 NAPI 处理量", "降低 NAPI 调度频次"],
+        "bad_for": ["加剧单次 softirq CPU 占用", "延迟 softirq 退出"]
+      },
+      "decreasing": {
+        "good_for": ["缩短单次 softirq CPU 占用"],
+        "bad_for": ["减少每次 NAPI 处理量", "加剧 time_squeeze 与 backlog 积压"]
+      },
+      "consumes": ["net/core/dev.c:napi_poll", "net/core/hotdata.c:14"]
+    },
+    {
+      "name": "warnings",
+      "kernel_name": "net_msg_warn",
+      "path": "/proc/sys/net/core/warnings",
+      "category": "tunable",
+      "gate": "",
+      "unit": "deprecated",
+      "default": 0,
+      "range": {},
+      "summary": "已废弃：源码注释 'Unused, but still a sysctl'，变量仅保留 sysctl 表项，当前内核代码不再消费此值。",
+      "when_to_increase": [],
+      "when_to_decrease": [],
+      "increasing": {
+        "good_for": ["(已废弃,改无效)"],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": ["(已废弃,改无效)"],
+        "bad_for": []
+      },
+      "deprecated": true,
+      "version_notes": "net/core/sysctl_net_core.c:41 注释明确 'Unused, but still a sysctl'。消费者可过滤。"
+    },
+    {
+      "name": "max_skb_frags",
+      "kernel_name": "net_hotdata.sysctl_max_skb_frags",
+      "path": "/proc/sys/net/core/max_skb_frags",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 17,
+      "range": { "min": 1, "max": 17 },
+      "summary": "单个 skb 最多可携带的 frag 段数上限（默认 MAX_SKB_FRAGS=17，CONFIG_MAX_SKB_FRAGS 可调）。影响 TSO/GSO 聚合度。",
+      "when_to_increase": ["想要更大 TSO/GSO 聚合（受 MAX_SKB_FRAGS 上限封顶）"],
+      "when_to_decrease": ["硬件/驱动 frags 限制更严", "想限制单 skb 大小"],
+      "increasing": {
+        "good_for": ["放大单 skb 聚合 frag 数", "提升 TSO/GSO 吞吐"],
+        "bad_for": ["加剧单 skb 占内存", "可能超过硬件/驱动限制"]
+      },
+      "decreasing": {
+        "good_for": ["缩小单 skb 占内存", "适配硬件/驱动 frags 上限"],
+        "bad_for": ["降低 TSO/GSO 聚合度", "降低单包发送效率"]
+      },
+      "consumes": ["net/core/hotdata.c:23", "net/core/sysctl_net_core.c:max_skb_frags"],
+      "version_notes": "max 取编译期 CONFIG_MAX_SKB_FRAGS（默认 17）。"
+    },
+    {
+      "name": "netdev_budget_usecs",
+      "kernel_name": "net_hotdata.netdev_budget_usecs",
+      "path": "/proc/sys/net/core/netdev_budget_usecs",
+      "category": "tunable",
+      "gate": "",
+      "unit": "us",
+      "default": 2,
+      "range": { "min": 2 },
+      "summary": "softirq NAPI 一次轮询的时间预算（us，默认 2*USEC_PER_SEC/HZ = 2 jiffies）。与 netdev_budget 共同决定 NAPI 退出。",
+      "when_to_increase": ["softnet_stat 显示 time_squeeze 高（按时间退出）", "想延长单次 NAPI 处理"],
+      "when_to_decrease": ["softirq 时间占比过高", "想更早退出 NAPI 释放 CPU"],
+      "increasing": {
+        "good_for": ["延长单次 NAPI 时间预算", "降低 NAPI 调度频次"],
+        "bad_for": ["加剧单次 softirq CPU 占用"]
+      },
+      "decreasing": {
+        "good_for": ["缩短单次 NAPI 时间预算", "更早让出 CPU"],
+        "bad_for": ["加剧 time_squeeze 与 backlog 积压"]
+      },
+      "consumes": ["net/core/dev.c:napi_poll", "net/core/hotdata.c:16", "net/core/sysctl_net_core.c:netdev_budget_usecs_min"],
+      "version_notes": "min = 2*USEC_PER_SEC/HZ（即 2 jiffies），与默认相同。"
+    },
+    {
+      "name": "fb_tunnels_only_for_init_net",
+      "kernel_name": "sysctl_fb_tunnels_only_for_init_net",
+      "path": "/proc/sys/net/core/fb_tunnels_only_for_init_net",
+      "category": "tunable",
+      "gate": "",
+      "unit": "enum: 0|1|2",
+      "default": 0,
+      "range": { "min": 0, "max": 2, "special": { "0": "每个 netns 都建 fallback tunnel", "1": "仅 init_net 建 fallback tunnel", "2": "任何 netns 都不建 fallback tunnel" } },
+      "summary": "fallback tunnel（sit/gre/ipip 等自动创建）的策略。常配合 fb_tunnels= cmdline 一起调。",
+      "when_to_increase": ["不想给容器/子 netns 建自动 tunnel", "想完全禁用 fallback tunnel"],
+      "when_to_decrease": ["希望每个 netns 都自动有 fallback tunnel"],
+      "increasing": {
+        "good_for": ["减少 fallback tunnel 创建数量", "降低 tunnel 自动分配"],
+        "bad_for": ["加剧容器需要 tunnel 时手动配置"]
+      },
+      "decreasing": {
+        "good_for": ["放大 fallback tunnel 覆盖", "容器自动有 tunnel"],
+        "bad_for": ["加剧自动 tunnel 数量", "增加意外冲突面"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:43", "net/ipv4/ip_tunnel.c:fb_tunnel_init"]
+    },
+    {
+      "name": "devconf_inherit_init_net",
+      "kernel_name": "sysctl_devconf_inherit_init_net",
+      "path": "/proc/sys/net/core/devconf_inherit_init_net",
+      "category": "tunable",
+      "gate": "",
+      "unit": "enum: 0|1|2|3",
+      "default": 0,
+      "range": { "min": 0, "max": 3, "special": { "0": "IPv4 继承 init_net，IPv6 重置为默认", "1": "IPv4/IPv6 都继承 init_net", "2": "IPv4/IPv6 都重置为默认", "3": "IPv4/IPv6 都继承当前 netns" } },
+      "summary": "新 netns 创建时 devconf 继承/重置策略。0~3 分别控制 IPv4/IPv6 是否继承 init_net。",
+      "when_to_increase": ["希望新 netns 与 init_net 配置一致", "想避免容器默认值漂移"],
+      "when_to_decrease": ["希望新 netns 用干净默认", "避免继承 init_net 的定制"],
+      "increasing": {
+        "good_for": ["让新 netns 更倾向继承 init_net 配置"],
+        "bad_for": ["加剧跨 netns 配置耦合", "调试隔离性变差"]
+      },
+      "decreasing": {
+        "good_for": ["让新 netns 更倾向默认值", "提升 netns 隔离"],
+        "bad_for": ["加剧 netns 间默认不一致"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:53", "net/ipv4/devinet.c:ipv4_devconf_init", "net/ipv6/addrconf.c:ipv6_devconf_init"]
+    },
+    {
+      "name": "high_order_alloc_disable",
+      "kernel_name": "net_high_order_alloc_disable_key.key",
+      "path": "/proc/sys/net/core/high_order_alloc_disable",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 0,
+      "range": {},
+      "summary": "网络协议栈高阶内存分配禁用开关（static_key）。1=禁用 compound page（大页）优化，退回 0 阶页。",
+      "when_to_increase": ["怀疑 compound page 分配失败/碎片化影响网络", "排查大页分配问题"],
+      "when_to_decrease": ["恢复 compound page 优化", "想用大页降低 SKB truesize"],
+      "increasing": {
+        "good_for": ["禁用大页分配", "排查大页相关问题时便于复现"],
+        "bad_for": ["加剧 SKB truesize", "降低网络内存效率"]
+      },
+      "decreasing": {
+        "good_for": ["启用 compound page 优化", "降低 SKB truesize"],
+        "bad_for": ["放大高阶分配失败概率"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:652", "include/net/sock.h:3092"],
+      "version_notes": "通过 proc_do_static_key 切换 static_branch。"
+    },
+    {
+      "name": "gro_normal_batch",
+      "kernel_name": "net_hotdata.gro_normal_batch",
+      "path": "/proc/sys/net/core/gro_normal_batch",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 8,
+      "range": { "min": 1 },
+      "summary": "GRO normal batch 大小（默认 8）。skb 在 GRO 退出时按此批大小合并到普通路径，平衡 GRO 收益与延迟。",
+      "when_to_increase": ["想最大化 GRO 聚合吞吐"],
+      "when_to_decrease": ["想降低 GRO 引入的延迟", "单流延迟敏感"],
+      "increasing": {
+        "good_for": ["放大 GRO 聚合批量", "提升网络吞吐"],
+        "bad_for": ["加剧 GRO 引入的延迟"]
+      },
+      "decreasing": {
+        "good_for": ["缩短 GRO 聚合延迟", "提升单流响应"],
+        "bad_for": ["降低 GRO 聚合度", "降低网络吞吐"]
+      },
+      "consumes": ["net/core/dev.c:napi_complete", "net/core/hotdata.c:12"]
+    },
+    {
+      "name": "netdev_unregister_timeout_secs",
+      "kernel_name": "netdev_unregister_timeout_secs",
+      "path": "/proc/sys/net/core/netdev_unregister_timeout_secs",
+      "category": "tunable",
+      "gate": "",
+      "unit": "s",
+      "default": 10,
+      "range": { "min": 1, "max": 3600 },
+      "summary": "网卡注销等待超时秒数（默认 10s，1~3600）。超时后强制释放 netdev。",
+      "when_to_increase": ["网卡注销常超时被强制释放", "希望给注销更多时间"],
+      "when_to_decrease": ["希望更快释放网卡资源", "注销卡顿想快速失败"],
+      "increasing": {
+        "good_for": ["延长注销等待", "降低误判强制释放"],
+        "bad_for": ["加剧注销卡顿时长", "延缓资源释放"]
+      },
+      "decreasing": {
+        "good_for": ["缩短注销等待", "加速资源释放"],
+        "bad_for": ["加剧强制释放风险", "可能中断未完成的注销"]
+      },
+      "consumes": ["net/core/dev.c:11585", "net/core/dev.c:11657"],
+      "version_notes": "extra2 = &int_3600 = 3600。"
+    },
+    {
+      "name": "skb_defer_max",
+      "kernel_name": "net_hotdata.sysctl_skb_defer_max",
+      "path": "/proc/sys/net/core/skb_defer_max",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 128,
+      "range": { "min": 0, "special": { "0": "禁用 skb defer 优化（static_branch 切到 disable）" } },
+      "summary": "per-CPU skb defer 队列最大长度（默认 128）。设为 0 时 static_branch_enable(skb_defer_disable_key) 禁用 defer 优化。",
+      "when_to_increase": ["defer 队列经常满导致提前 flush", "想放大 defer 聚合批量"],
+      "when_to_decrease": ["defer 引入延迟过大", "想关闭 defer 设为 0"],
+      "increasing": {
+        "good_for": ["放大 defer 队列容量", "提升 defer 聚合批量"],
+        "bad_for": ["加剧 defer 引入的延迟", "增加 defer 队列内存"]
+      },
+      "decreasing": {
+        "good_for": ["缩短 defer 引入的延迟", "降低 defer 队列内存"],
+        "bad_for": ["加剧 defer 提前 flush", "降低 defer 聚合收益"]
+      },
+      "consumes": ["net/core/sysctl_net_core.c:proc_do_skb_defer_max", "net/core/skbuff.c:1528", "net/core/skbuff.c:7296", "net/core/hotdata.c:24"],
+      "version_notes": "=0 时通过 static_branch_enable(&skb_defer_disable_key) 关闭 defer 整套优化路径。"
+    },
+    {
+      "name": "tcp_max_orphans",
+      "kernel_name": "sysctl_tcp_max_orphans",
+      "path": "/proc/sys/net/ipv4/tcp_max_orphans",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": "cnt/2（按内存 hashinfo 容量自动初始化）",
+      "range": {},
+      "summary": "TCP orphan（已关闭 fd 但内核仍持有）socket 数上限。超限将强制杀死孤儿 socket 释放内存。",
+      "when_to_increase": ["orphan 数超限导致连接被强制 RST", "想放宽 orphan 上限"],
+      "when_to_decrease": ["想更早杀 orphan 控制内存", "防止 orphan 占用过多内存"],
+      "increasing": {
+        "good_for": ["放宽 orphan 上限", "降低被强制杀的概率"],
+        "bad_for": ["加剧 orphan 内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["收紧 orphan 上限", "降低 orphan 内存占用"],
+        "bad_for": ["加剧被强制杀的概率", "可能误杀正常短时 orphan"]
+      },
+      "consumes": ["net/ipv4/tcp.c:3111", "net/ipv4/tcp.c:5358"]
+    },
+    {
+      "name": "inet_peer_threshold",
+      "kernel_name": "inet_peer_threshold",
+      "path": "/proc/sys/net/ipv4/inet_peer_threshold",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": "clamp(nr_entries, 4096, 65536+128)",
+      "range": {},
+      "summary": "inet_peer 缓存（per-peer info）最大条目数阈值。启动按 hashinfo size clamp 到 4096~65536+128。",
+      "when_to_increase": ["大量远端 peer，peer 信息被频繁回收重建"],
+      "when_to_decrease": ["peer 缓存内存吃紧", "希望降低 peer 缓存占用"],
+      "increasing": {
+        "good_for": ["放大 peer 缓存容量", "降低 peer 信息重建"],
+        "bad_for": ["加剧 peer 缓存内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["降低 peer 缓存内存占用"],
+        "bad_for": ["加剧 peer 信息频繁回收重建"]
+      },
+      "consumes": ["net/ipv4/inetpeer.c:66", "net/ipv4/inetpeer.c:80", "net/ipv4/inetpeer.c:141"]
+    },
+    {
+      "name": "inet_peer_minttl",
+      "kernel_name": "inet_peer_minttl",
+      "path": "/proc/sys/net/ipv4/inet_peer_minttl",
+      "category": "tunable",
+      "gate": "",
+      "unit": "jiffies",
+      "default": 1200,
+      "range": {},
+      "summary": "inet_peer 条目在高负载下（达到 threshold）的最短 TTL（jiffies，默认 120*HZ=120s），避免被过早回收。",
+      "when_to_increase": ["peer 信息频繁被回收", "希望高负载下 peer 保留更久"],
+      "when_to_decrease": ["peer 内存吃紧", "希望更早回收 peer"],
+      "increasing": {
+        "good_for": ["延长高负载下 peer 保留时长", "降低 peer 重建"],
+        "bad_for": ["加剧 peer 内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["缩短高负载下 peer 保留", "降低 peer 内存占用"],
+        "bad_for": ["加剧 peer 频繁回收"]
+      },
+      "consumes": ["net/ipv4/inetpeer.c:68", "net/ipv4/inetpeer.c:143"],
+      "version_notes": "默认 120*HZ；proc_dointvec_jiffies 处理（输入秒，内部 jiffies）。"
+    },
+    {
+      "name": "inet_peer_maxttl",
+      "kernel_name": "inet_peer_maxttl",
+      "path": "/proc/sys/net/ipv4/inet_peer_maxttl",
+      "category": "tunable",
+      "gate": "",
+      "unit": "jiffies",
+      "default": 6000,
+      "range": {},
+      "summary": "inet_peer 条目常规 TTL（jiffies，默认 10*60*HZ=600s）。到期后被回收。",
+      "when_to_increase": ["peer 不多但希望保留更久", "想降低 peer 重建"],
+      "when_to_decrease": ["peer 内存吃紧", "希望更早回收 peer"],
+      "increasing": {
+        "good_for": ["延长 peer 常规保留", "降低 peer 重建"],
+        "bad_for": ["加剧 peer 内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["缩短 peer 常规保留", "降低 peer 内存占用"],
+        "bad_for": ["加剧 peer 重建"]
+      },
+      "consumes": ["net/ipv4/inetpeer.c:69", "net/ipv4/inetpeer.c:142"],
+      "version_notes": "默认 10*60*HZ=600s。"
+    },
+    {
+      "name": "tcp_mem",
+      "kernel_name": "sysctl_tcp_mem",
+      "path": "/proc/sys/net/ipv4/tcp_mem",
+      "category": "tunable",
+      "gate": "",
+      "unit": "pages",
+      "default": "[limit*3/4, limit, limit*3/2]（limit=nr_free_buffer_pages/16，min 128）",
+      "range": { "min": 1 },
+      "summary": "TCP 全局 socket 内存配额三值（min/pressure/max，单位页）。tcp_init_mem 按 nr_free_buffer_pages/16 初始化。",
+      "when_to_increase": ["高 TCP 连接数/大 BDP 想放宽内存上限", "tcp mem pressure 触发太早"],
+      "when_to_decrease": ["TCP 内存吃紧想收紧上限", "希望更早进入 pressure 模式"],
+      "increasing": {
+        "good_for": ["放宽 TCP 内存上限", "降低 pressure 进入概率"],
+        "bad_for": ["加剧 TCP 内存占用", "削弱内存压力保护"]
+      },
+      "decreasing": {
+        "good_for": ["收紧 TCP 内存上限", "更早进入 pressure 模式"],
+        "bad_for": ["加剧 pressure 频繁触发", "降低 TCP 吞吐"]
+      },
+      "consumes": ["net/ipv4/tcp.c:301", "net/ipv4/tcp.c:5179", "net/ipv4/tcp.c:5184"],
+      "version_notes": "三值数组，proc_doulongvec_minmax；min=1。"
+    },
+    {
+      "name": "tcp_low_latency",
+      "kernel_name": "sysctl_tcp_low_latency",
+      "path": "/proc/sys/net/ipv4/tcp_low_latency",
+      "category": "tunable",
+      "gate": "",
+      "unit": "deprecated",
+      "default": 0,
+      "range": {},
+      "summary": "已废弃（源码注释 obsolete）：变量仅保留 sysctl 表项，当前内核代码不再消费此值。",
+      "when_to_increase": [],
+      "when_to_decrease": [],
+      "increasing": {
+        "good_for": ["(已废弃,改无效)"],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": ["(已废弃,改无效)"],
+        "bad_for": []
+      },
+      "deprecated": true,
+      "consumes": ["net/ipv4/sysctl_net_ipv4.c:55", "net/ipv4/sysctl_net_ipv4.c:567"],
+      "version_notes": "net/ipv4/sysctl_net_ipv4.c:54 注释 '/* obsolete */'。消费者可过滤。"
+    },
+    {
+      "name": "cipso_cache_enable",
+      "kernel_name": "cipso_v4_cache_enabled",
+      "path": "/proc/sys/net/ipv4/cipso_cache_enable",
+      "category": "tunable",
+      "gate": "CONFIG_NETLABEL",
+      "unit": "bool",
+      "default": 1,
+      "range": {},
+      "summary": "CIPSO 标签命中缓存开关（默认 1，CONFIG_NETLABEL）。关闭后所有 CIPSO 标签都重新解析。",
+      "when_to_increase": ["启用 CIPSO 缓存提升标签处理性能"],
+      "when_to_decrease": ["怀疑 CIPSO 缓存陈旧/不一致", "调试 CIPSO 标签"],
+      "increasing": {
+        "good_for": ["启用 CIPSO 缓存", "降低标签解析开销"],
+        "bad_for": ["可能缓存陈旧标签", "调试更难"]
+      },
+      "decreasing": {
+        "good_for": ["禁用 CIPSO 缓存", "便于调试标签"],
+        "bad_for": ["加剧标签解析开销"]
+      },
+      "consumes": ["net/ipv4/cipso_ipv4.c:51", "net/ipv4/cipso_ipv4.c:241", "net/ipv4/cipso_ipv4.c:305"]
+    },
+    {
+      "name": "cipso_cache_bucket_size",
+      "kernel_name": "cipso_v4_cache_bucketsize",
+      "path": "/proc/sys/net/ipv4/cipso_cache_bucket_size",
+      "category": "tunable",
+      "gate": "CONFIG_NETLABEL",
+      "unit": "count",
+      "default": 10,
+      "range": {},
+      "summary": "CIPSO 缓存每桶条目上限（默认 10）。决定 cache 桶容量，超限后旧条目被替换。",
+      "when_to_increase": ["CIPSO 流多、缓存冲突率高"],
+      "when_to_decrease": ["CIPSO 缓存内存吃紧", "桶利用率低"],
+      "increasing": {
+        "good_for": ["放大 CIPSO 缓存桶容量", "降低缓存冲突"],
+        "bad_for": ["加剧 CIPSO 缓存内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["降低 CIPSO 缓存内存占用"],
+        "bad_for": ["加剧缓存冲突", "降低标签命中"]
+      },
+      "consumes": ["net/ipv4/cipso_ipv4.c:52", "net/ipv4/cipso_ipv4.c:298"]
+    },
+    {
+      "name": "cipso_rbm_optfmt",
+      "kernel_name": "cipso_v4_rbm_optfmt",
+      "path": "/proc/sys/net/ipv4/cipso_rbm_optfmt",
+      "category": "tunable",
+      "gate": "CONFIG_NETLABEL",
+      "unit": "bool",
+      "default": 0,
+      "range": {},
+      "summary": "CIPSO 选项格式优化开关。1=发送时合并/优化 CIPSO 选项格式（自由格式）。默认 0。",
+      "when_to_increase": ["希望发送时合并 CIPSO 选项节省空间"],
+      "when_to_decrease": ["兼容性优先想保留标准格式"],
+      "increasing": {
+        "good_for": ["优化 CIPSO 选项格式", "节省 IP 选项空间"],
+        "bad_for": ["可能引发兼容性问题"]
+      },
+      "decreasing": {
+        "good_for": ["保留标准 CIPSO 格式", "提升兼容性"],
+        "bad_for": ["IP 选项空间利用率低"]
+      },
+      "consumes": ["net/ipv4/cipso_ipv4.c:76", "net/ipv4/cipso_ipv4.c:1199"]
+    },
+    {
+      "name": "cipso_rbm_strictvalid",
+      "kernel_name": "cipso_v4_rbm_strictvalid",
+      "path": "/proc/sys/net/ipv4/cipso_rbm_strictvalid",
+      "category": "tunable",
+      "gate": "CONFIG_NETLABEL",
+      "unit": "bool",
+      "default": 1,
+      "range": {},
+      "summary": "CIPSO 严格校验开关（默认 1）。1=接收时严格校验 CIPSO 标签，不一致则丢弃。",
+      "when_to_increase": ["安全敏感场景希望严格校验"],
+      "when_to_decrease": ["兼容性优先希望宽容处理错误标签"],
+      "increasing": {
+        "good_for": ["启用严格 CIPSO 校验", "降低错误/伪造标签风险"],
+        "bad_for": ["可能误丢格式轻微异常的标签"]
+      },
+      "decreasing": {
+        "good_for": ["宽容处理 CIPSO 标签", "提升兼容性"],
+        "bad_for": ["放大伪造/错误标签风险"]
+      },
+      "consumes": ["net/ipv4/cipso_ipv4.c:77", "net/ipv4/cipso_ipv4.c:1604"]
+    },
+    {
+      "name": "udp_mem",
+      "kernel_name": "sysctl_udp_mem",
+      "path": "/proc/sys/net/ipv4/udp_mem",
+      "category": "tunable",
+      "gate": "",
+      "unit": "pages",
+      "default": "[limit*3/4, limit, limit*3/2]（limit=nr_free_buffer_pages/16）",
+      "range": {},
+      "summary": "UDP 全局 socket 内存配额三值（min/pressure/max，单位页）。udp_init_mem 按 nr_free_buffer_pages/16 初始化。",
+      "when_to_increase": ["高 UDP 流量想放宽内存上限", "udp mem pressure 频繁触发"],
+      "when_to_decrease": ["UDP 内存吃紧想收紧", "希望更早进入 pressure"],
+      "increasing": {
+        "good_for": ["放宽 UDP 内存上限", "降低 pressure 进入概率"],
+        "bad_for": ["加剧 UDP 内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["收紧 UDP 内存上限", "更早进入 pressure"],
+        "bad_for": ["加剧 pressure 频繁触发", "降低 UDP 吞吐"]
+      },
+      "consumes": ["net/ipv4/udp.c:125", "net/ipv4/udp.c:3882", "net/ipv4/udp.c:3137"]
+    },
+    {
+      "name": "fib_sync_mem",
+      "kernel_name": "sysctl_fib_sync_mem",
+      "path": "/proc/sys/net/ipv4/fib_sync_mem",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bytes",
+      "default": 524288,
+      "range": { "min": 65536, "max": 67108864 },
+      "summary": "FIB trie 节点释放阈值（字节，默认 512KB）。达到后同步释放 tnode 而非 RCU 延后释放。",
+      "when_to_increase": ["FIB 大量节点 RCU 释放内存压力", "希望减少 RCU 延后释放积压"],
+      "when_to_decrease": ["希望更早 RCU 延后释放，缩短同步阻塞", "想降低同步释放阻塞"],
+      "increasing": {
+        "good_for": ["放大同步释放阈值", "减少 RCU 释放积压"],
+        "bad_for": ["加剧单次同步释放阻塞时长"]
+      },
+      "decreasing": {
+        "good_for": ["缩短单次同步释放阻塞", "更早 RCU 延后释放"],
+        "bad_for": ["加剧 RCU 释放积压", "增加内存峰值"]
+      },
+      "consumes": ["net/ipv4/fib_trie.c:182", "net/ipv4/fib_trie.c:496"],
+      "version_notes": "默认 512*1024=524288；min=64KB，max=64MB。"
+    },
+    {
+      "name": "bindv6only",
+      "kernel_name": "init_net.ipv6.sysctl.bindv6only",
+      "path": "/proc/sys/net/ipv6/bindv6only",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 0,
+      "range": {},
+      "summary": "IPv6 是否仅绑定 v6（默认 0=与 IPv4 共享端口空间）。1=端口与 v4 互斥，独立监听。",
+      "when_to_increase": ["希望 v6 端口与 v4 严格互斥", "v6/v4 同端口独立监听"],
+      "when_to_decrease": ["希望 v6/v4 共享端口空间", "兼容老应用"],
+      "increasing": {
+        "good_for": ["隔离 v6 与 v4 端口空间", "v6/v4 同端口独立监听"],
+        "bad_for": ["加剧应用兼容性问题", "v4/v6 双栈应用需分别绑"]
+      },
+      "decreasing": {
+        "good_for": ["共享 v6/v4 端口空间", "提升双栈应用兼容性"],
+        "bad_for": ["加剧 v6 与 v4 端口冲突"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:926", "net/ipv6/af_inet6.c:inet6_bind"]
+    },
+    {
+      "name": "anycast_src_echo_reply",
+      "kernel_name": "init_net.ipv6.sysctl.anycast_src_echo_reply",
+      "path": "/proc/sys/net/ipv6/anycast_src_echo_reply",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 0,
+      "range": {},
+      "summary": "是否对 anycast 地址的 echo 请求回复（默认 0=不回）。1=对 anycast 源 echo 请求也回送 reply。",
+      "when_to_increase": ["希望对 anycast echo 请求回复"],
+      "when_to_decrease": ["不想对 anycast echo 请求回复", "安全策略要求不回 anycast"],
+      "increasing": {
+        "good_for": ["对 anycast echo 请求回复"],
+        "bad_for": ["放大 anycast 探测响应面"]
+      },
+      "decreasing": {
+        "good_for": ["不对 anycast echo 回复", "降低 anycast 探测响应面"],
+        "bad_for": ["anycast echo 请求得不到回复"]
+      },
+      "consumes": ["net/ipv6/icmp.c:951"]
+    },
+    {
+      "name": "flowlabel_consistency",
+      "kernel_name": "init_net.ipv6.sysctl.flowlabel_consistency",
+      "path": "/proc/sys/net/ipv6/flowlabel_consistency",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 1,
+      "range": {},
+      "summary": "是否强制 IPv6 flow label 一致性校验（默认 1，RFC 6437 严格模式）。0=宽容。",
+      "when_to_increase": ["安全/合规要求严格 flow label 一致性"],
+      "when_to_decrease": ["兼容性优先希望宽容 flow label"],
+      "increasing": {
+        "good_for": ["启用严格 flow label 一致性", "降低异常 flow label 风险"],
+        "bad_for": ["可能误丢非一致 flow label 包"]
+      },
+      "decreasing": {
+        "good_for": ["宽容 flow label", "提升兼容性"],
+        "bad_for": ["放大异常 flow label 风险"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:942"]
+    },
+    {
+      "name": "auto_flowlabels",
+      "kernel_name": "init_net.ipv6.sysctl.auto_flowlabels",
+      "path": "/proc/sys/net/ipv6/auto_flowlabels",
+      "category": "tunable",
+      "gate": "",
+      "unit": "enum: 0|1|2|3",
+      "default": 1,
+      "range": { "min": 0, "max": 3, "special": { "0": "OFF 不自动设置", "1": "OPTOUT 默认（应用可选开）", "2": "OPTIN 应用显式选开", "3": "FORCED 强制全部自动" } },
+      "summary": "IPv6 自动 flow label 模式。默认 1=OPTOUT。控制 IPv6 出包是否自动打 flow label。",
+      "when_to_increase": ["希望更多 IPv6 包自动打 flow label"],
+      "when_to_decrease": ["希望更少自动 flow label", "兼容性优先"],
+      "increasing": {
+        "good_for": ["放大自动 flow label 覆盖", "提升 IPv6 流负载分担"],
+        "bad_for": ["可能放大兼容性问题"]
+      },
+      "decreasing": {
+        "good_for": ["降低自动 flow label 覆盖", "提升兼容性"],
+        "bad_for": ["削弱 IPv6 流负载分担"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:943", "net/ipv6/ip6_output.c:ip6_make_flowlabel"],
+      "version_notes": "extra2 = &auto_flowlabels_max = IP6_AUTO_FLOW_LABEL_FORCED = 3。"
+    },
+    {
+      "name": "fwmark_reflect",
+      "kernel_name": "init_net.ipv6.sysctl.fwmark_reflect",
+      "path": "/proc/sys/net/ipv6/fwmark_reflect",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 0,
+      "range": {},
+      "summary": "是否将 fwmark 反射到 IPv6 出包（默认 0）。1=反射 skb mark 到 IPv6 包（用于策略路由等）。",
+      "when_to_increase": ["希望 IPv6 出包带 fwmark 做策略路由"],
+      "when_to_decrease": ["不希望 IPv6 出包带 fwmark"],
+      "increasing": {
+        "good_for": ["让 IPv6 出包带 fwmark", "支持策略路由"],
+        "bad_for": ["放大 fwmark 信息泄漏面"]
+      },
+      "decreasing": {
+        "good_for": ["不让 IPv6 出包带 fwmark", "降低信息泄漏"],
+        "bad_for": ["策略路由无法用 fwmark 区分"]
+      },
+      "consumes": ["net/ipv6/ip6_output.c"]
+    },
+    {
+      "name": "idgen_retries",
+      "kernel_name": "init_net.ipv6.sysctl.idgen_retries",
+      "path": "/proc/sys/net/ipv6/idgen_retries",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 3,
+      "range": {},
+      "summary": "IPv6 瞬时地址生成重试次数（默认 3）。冲突时按此次数重试。",
+      "when_to_increase": ["瞬时地址冲突频发", "希望更多重试"],
+      "when_to_decrease": ["希望减少重试快速失败"],
+      "increasing": {
+        "good_for": ["放大瞬时地址生成重试", "降低冲突放弃概率"],
+        "bad_for": ["加剧瞬时地址生成延迟"]
+      },
+      "decreasing": {
+        "good_for": ["缩短瞬时地址生成重试", "快速失败"],
+        "bad_for": ["加剧冲突放弃概率"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:944", "net/ipv6/addrconf.c:ipv6_gen_tempaddr"]
+    },
+    {
+      "name": "idgen_delay",
+      "kernel_name": "init_net.ipv6.sysctl.idgen_delay",
+      "path": "/proc/sys/net/ipv6/idgen_delay",
+      "category": "tunable",
+      "gate": "",
+      "unit": "jiffies",
+      "default": 100,
+      "range": {},
+      "summary": "IPv6 瞬时地址生成重试间隔（jiffies，默认 1*HZ=1s）。",
+      "when_to_increase": ["希望冲突后间隔更长再重试"],
+      "when_to_decrease": ["希望更快重试"],
+      "increasing": {
+        "good_for": ["放大重试间隔", "降低连续冲突概率"],
+        "bad_for": ["加剧瞬时地址生成延迟"]
+      },
+      "decreasing": {
+        "good_for": ["缩短重试间隔", "加速瞬时地址生成"],
+        "bad_for": ["加剧连续冲突概率"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:945", "net/ipv6/addrconf.c:ipv6_gen_tempaddr"],
+      "version_notes": "默认 1*HZ；proc_dointvec_jiffies 处理。"
+    },
+    {
+      "name": "flowlabel_state_ranges",
+      "kernel_name": "init_net.ipv6.sysctl.flowlabel_state_ranges",
+      "path": "/proc/sys/net/ipv6/flowlabel_state_ranges",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 0,
+      "range": {},
+      "summary": "flow label 是否按状态范围分配（默认 0）。1=按状态范围分配 flow label（区分 established/new 等）。",
+      "when_to_increase": ["希望 flow label 按连接状态范围区分"],
+      "when_to_decrease": ["不希望 flow label 按状态区分"],
+      "increasing": {
+        "good_for": ["按状态范围分配 flow label", "提升流区分度"],
+        "bad_for": ["flow label 分配复杂度上升"]
+      },
+      "decreasing": {
+        "good_for": ["简化 flow label 分配"],
+        "bad_for": ["降低 flow label 流区分度"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:946", "net/ipv6/ip6_flowlabel.c:ipv6_flowlabel_opt"]
+    },
+    {
+      "name": "ip_nonlocal_bind",
+      "kernel_name": "init_net.ipv6.sysctl.ip_nonlocal_bind",
+      "path": "/proc/sys/net/ipv6/ip_nonlocal_bind",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 0,
+      "range": {},
+      "summary": "IPv6 允许绑定非本地地址（默认 0）。1=允许（需 CAP_NET_RAW 或管理员设），用于 VIP/HAProxy 等。",
+      "when_to_increase": ["VIP/HA 场景需绑定非本地地址"],
+      "when_to_decrease": ["不允许非本地绑定"],
+      "increasing": {
+        "good_for": ["允许 IPv6 非本地绑定", "支持 VIP/HA"],
+        "bad_for": ["放大地址欺骗风险"]
+      },
+      "decreasing": {
+        "good_for": ["禁止非本地绑定", "降低地址欺骗风险"],
+        "bad_for": ["VIP/HA 场景需应用层处理"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:inet6_bind"]
+    },
+    {
+      "name": "flowlabel_reflect",
+      "kernel_name": "init_net.ipv6.sysctl.flowlabel_reflect",
+      "path": "/proc/sys/net/ipv6/flowlabel_reflect",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bitmap",
+      "default": 0,
+      "range": { "min": 0, "max": 7 },
+      "summary": "IPv6 flow label 反射位图（0~7）。bit 决定哪些场景（如 ICMPv6 echo reply/TCP）反射入向 flow label。",
+      "when_to_increase": ["希望反射 flow label 用于策略路由/负载分担"],
+      "when_to_decrease": ["不希望反射 flow label"],
+      "increasing": {
+        "good_for": ["放大 flow label 反射场景", "支持策略路由/负载分担"],
+        "bad_for": ["加剧 flow label 信息泄漏"]
+      },
+      "decreasing": {
+        "good_for": ["减少 flow label 反射", "降低信息泄漏"],
+        "bad_for": ["削弱策略路由/负载分担"]
+      },
+      "consumes": ["net/ipv6/icmp.c:963", "net/ipv6/tcp_ipv6.c:1122"],
+      "version_notes": "位图，bit 含义见源码 inet6_assign_bit；extra2=&flowlabel_reflect_max=0x7。"
+    },
+    {
+      "name": "max_dst_opts_number",
+      "kernel_name": "init_net.ipv6.sysctl.max_dst_opts_cnt",
+      "path": "/proc/sys/net/ipv6/max_dst_opts_number",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 8,
+      "range": {},
+      "summary": "IPv6 Destination Options 头最多插入数量（默认 8）。超限的包被丢弃。",
+      "when_to_increase": ["应用需要更多 DST 选项"],
+      "when_to_decrease": ["希望限制 DST 选项数量防滥用"],
+      "increasing": {
+        "good_for": ["放宽 DST 选项数量上限"],
+        "bad_for": ["加剧解析开销", "放大滥用风险"]
+      },
+      "decreasing": {
+        "good_for": ["收紧 DST 选项上限", "降低滥用风险"],
+        "bad_for": ["限制应用使用 DST 选项"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:947", "net/ipv6/exthdrs.c:ip6_parse_tlv"]
+    },
+    {
+      "name": "max_hbh_opts_number",
+      "kernel_name": "init_net.ipv6.sysctl.max_hbh_opts_cnt",
+      "path": "/proc/sys/net/ipv6/max_hbh_opts_number",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 8,
+      "range": {},
+      "summary": "IPv6 Hop-by-Hop Options 头最多插入数量（默认 8）。超限的包被丢弃。",
+      "when_to_increase": ["应用需要更多 HBH 选项"],
+      "when_to_decrease": ["希望限制 HBH 选项数量防滥用"],
+      "increasing": {
+        "good_for": ["放宽 HBH 选项数量上限"],
+        "bad_for": ["加剧每跳解析开销", "放大滥用风险"]
+      },
+      "decreasing": {
+        "good_for": ["收紧 HBH 选项上限", "降低每跳解析开销"],
+        "bad_for": ["限制应用使用 HBH 选项"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:948", "net/ipv6/exthdrs.c:ip6_parse_tlv"]
+    },
+    {
+      "name": "max_dst_opts_length",
+      "kernel_name": "init_net.ipv6.sysctl.max_dst_opts_len",
+      "path": "/proc/sys/net/ipv6/max_dst_opts_length",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bytes",
+      "default": 2147483647,
+      "range": {},
+      "summary": "IPv6 Destination Options 头最大字节长度（默认 INT_MAX=不限）。",
+      "when_to_increase": ["应用需要更长 DST 选项"],
+      "when_to_decrease": ["希望限制 DST 选项字节长度防滥用"],
+      "increasing": {
+        "good_for": ["放宽 DST 选项字节上限"],
+        "bad_for": ["加剧解析开销", "放大滥用风险"]
+      },
+      "decreasing": {
+        "good_for": ["收紧 DST 选项字节上限", "降低滥用风险"],
+        "bad_for": ["限制应用使用长 DST 选项"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:949", "net/ipv6/exthdrs.c:ip6_parse_tlv"],
+      "version_notes": "默认 IP6_DEFAULT_MAX_DST_OPTS_LEN=INT_MAX。"
+    },
+    {
+      "name": "max_hbh_length",
+      "kernel_name": "init_net.ipv6.sysctl.max_hbh_opts_len",
+      "path": "/proc/sys/net/ipv6/max_hbh_length",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bytes",
+      "default": 2147483647,
+      "range": {},
+      "summary": "IPv6 Hop-by-Hop Options 头最大字节长度（默认 INT_MAX=不限）。",
+      "when_to_increase": ["应用需要更长 HBH 选项"],
+      "when_to_decrease": ["希望限制 HBH 选项字节长度"],
+      "increasing": {
+        "good_for": ["放宽 HBH 选项字节上限"],
+        "bad_for": ["加剧每跳解析开销", "放大滥用风险"]
+      },
+      "decreasing": {
+        "good_for": ["收紧 HBH 选项字节上限", "降低每跳解析开销"],
+        "bad_for": ["限制应用使用长 HBH 选项"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:950", "net/ipv6/exthdrs.c:ip6_parse_tlv"],
+      "version_notes": "默认 IP6_DEFAULT_MAX_HBH_OPTS_LEN=INT_MAX。"
+    },
+    {
+      "name": "fib_multipath_hash_policy",
+      "kernel_name": "init_net.ipv6.sysctl.multipath_hash_policy",
+      "path": "/proc/sys/net/ipv6/fib_multipath_hash_policy",
+      "category": "tunable",
+      "gate": "CONFIG_IP_ROUTE_MULTIPATH",
+      "unit": "enum: 0|1|2|3",
+      "default": 0,
+      "range": { "min": 0, "max": 3, "special": { "0": "L3 hash", "1": "L4 hash", "2": "flowinfo hash", "3": "字段位图（multipath_hash_fields）" } },
+      "summary": "IPv6 多路径路由 hash 策略。3=用 multipath_hash_fields 位图自定义字段。",
+      "when_to_increase": ["希望按更细粒度字段做 ECMP hash"],
+      "when_to_decrease": ["希望简化 hash 策略"],
+      "increasing": {
+        "good_for": ["放大 hash 字段维度", "提升 ECMP 流分布精度"],
+        "bad_for": ["加剧 hash 计算开销"]
+      },
+      "decreasing": {
+        "good_for": ["简化 hash 策略", "降低计算开销"],
+        "bad_for": ["削弱 ECMP 流分布精度"]
+      },
+      "consumes": ["net/ipv6/sysctl_net_ipv6.c:proc_rt6_multipath_hash_policy", "net/ipv6/route.c:rt6_multipath_select"]
+    },
+    {
+      "name": "fib_multipath_hash_fields",
+      "kernel_name": "init_net.ipv6.sysctl.multipath_hash_fields",
+      "path": "/proc/sys/net/ipv6/fib_multipath_hash_fields",
+      "category": "tunable",
+      "gate": "CONFIG_IP_ROUTE_MULTIPATH",
+      "unit": "bitmap",
+      "default": "L3 字段（源/目的地址）",
+      "range": { "min": 1 },
+      "summary": "IPv6 多路径 hash 字段位图（仅 multipath_hash_policy=3 生效）。bit 见 FIB_MULTIPATH_HASH_FIELD_*。",
+      "when_to_increase": ["希望 hash 包含更多字段（如端口/协议）"],
+      "when_to_decrease": ["希望简化 hash 字段"],
+      "increasing": {
+        "good_for": ["放大 hash 字段维度", "提升 ECMP 流分布精度"],
+        "bad_for": ["加剧 hash 计算开销"]
+      },
+      "decreasing": {
+        "good_for": ["简化 hash 字段", "降低计算开销"],
+        "bad_for": ["削弱 ECMP 流分布精度"]
+      },
+      "consumes": ["net/ipv6/sysctl_net_ipv6.c:proc_rt6_multipath_hash_fields", "net/ipv6/route.c:rt6_multipath_select"],
+      "version_notes": "extra2=&rt6_multipath_hash_fields_all_mask。仅 multipath_hash_policy=3 时生效。"
+    },
+    {
+      "name": "seg6_flowlabel",
+      "kernel_name": "init_net.ipv6.sysctl.seg6_flowlabel",
+      "path": "/proc/sys/net/ipv6/seg6_flowlabel",
+      "category": "tunable",
+      "gate": "",
+      "unit": "enum: 0|1|2|3",
+      "default": 0,
+      "range": {},
+      "summary": "Segment Routing IPv6 包的 flow label 来源策略（默认 0=不自动设置）。控制 seg6_iptunnel 是否注入 flow label。",
+      "when_to_increase": ["希望 seg6 包自动带 flow label"],
+      "when_to_decrease": ["不希望 seg6 包自动带 flow label"],
+      "increasing": {
+        "good_for": ["放大 seg6 flow label 注入", "支持 SR 流负载分担"],
+        "bad_for": ["加剧兼容性问题"]
+      },
+      "decreasing": {
+        "good_for": ["降低 seg6 flow label 注入", "提升兼容性"],
+        "bad_for": ["削弱 SR 流负载分担"]
+      },
+      "consumes": ["net/ipv6/seg6_iptunnel.c:125"]
+    },
+    {
+      "name": "fib_notify_on_flag_change",
+      "kernel_name": "init_net.ipv6.sysctl.fib_notify_on_flag_change",
+      "path": "/proc/sys/net/ipv6/fib_notify_on_flag_change",
+      "category": "tunable",
+      "gate": "",
+      "unit": "enum: 0|1|2",
+      "default": 0,
+      "range": { "min": 0, "max": 2, "special": { "0": "关", "1": "dev_change 时通知", "2": "+hw_port/ignore 时通知" } },
+      "summary": "FIB 标志变化通知级别。控制路由标志变化是否触发 netevent 通知。",
+      "when_to_increase": ["希望更细 FIB 通知"],
+      "when_to_decrease": ["希望减少 FIB 通知噪声"],
+      "increasing": {
+        "good_for": ["放大 FIB 标志变化通知覆盖", "更及时感知变化"],
+        "bad_for": ["加剧通知噪声"]
+      },
+      "decreasing": {
+        "good_for": ["降低 FIB 通知噪声"],
+        "bad_for": ["削弱变化感知时效"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:951", "net/ipv6/route.c:fib6_notify"]
+    },
+    {
+      "name": "ioam6_id",
+      "kernel_name": "init_net.ipv6.sysctl.ioam6_id",
+      "path": "/proc/sys/net/ipv6/ioam6_id",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 16777215,
+      "range": { "min": 0, "max": 16777215 },
+      "summary": "本节点 IOAM6 32 位 ID（默认 IOAM6_DEFAULT_ID=U32_MAX>>8=0xFFFFFF=未配置）。",
+      "when_to_increase": ["启用 IOAM6 并设节点 ID"],
+      "when_to_decrease": ["希望降低/清空 IOAM6 节点 ID"],
+      "increasing": {
+        "good_for": ["设置 IOAM6 节点 ID", "支持 IOAM6 跟踪"],
+        "bad_for": ["放大 IOAM6 信息暴露"]
+      },
+      "decreasing": {
+        "good_for": ["降低 IOAM6 节点 ID", "降低信息暴露"],
+        "bad_for": ["削弱 IOAM6 跟踪能力"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:954", "net/ipv6/ioam6.c"],
+      "version_notes": "extra2=&ioam6_id_max=IOAM6_DEFAULT_ID=U32_MAX>>8。"
+    },
+    {
+      "name": "ioam6_id_wide",
+      "kernel_name": "init_net.ipv6.sysctl.ioam6_id_wide",
+      "path": "/proc/sys/net/ipv6/ioam6_id_wide",
+      "category": "tunable",
+      "gate": "",
+      "unit": "count",
+      "default": 72057594037927935,
+      "range": { "min": 0, "max": 72057594037927935 },
+      "summary": "本节点 IOAM6 64 位 ID（默认 IOAM6_DEFAULT_ID_WIDE=U64_MAX>>8=未配置）。",
+      "when_to_increase": ["启用 IOAM6 并设宽 ID"],
+      "when_to_decrease": ["希望降低/清空 IOAM6 宽 ID"],
+      "increasing": {
+        "good_for": ["设置 IOAM6 宽 ID", "支持 IOAM6 跟踪"],
+        "bad_for": ["放大 IOAM6 信息暴露"]
+      },
+      "decreasing": {
+        "good_for": ["降低 IOAM6 宽 ID", "降低信息暴露"],
+        "bad_for": ["削弱 IOAM6 跟踪能力"]
+      },
+      "consumes": ["net/ipv6/af_inet6.c:955", "net/ipv6/ioam6.c"],
+      "version_notes": "extra2=&ioam6_id_wide_max=IOAM6_DEFAULT_ID_WIDE=U64_MAX>>8。"
+    },
+    {
+      "name": "classid",
+      "kernel_name": "write_classid",
+      "path": "/sys/fs/cgroup/net_cls.<name>/classid",
+      "category": "tunable",
+      "gate": "CONFIG_CGROUP_NET_CLASSID",
+      "unit": "count",
+      "default": 0,
+      "range": {},
+      "summary": "net_cls cgroup 的 classid（u32）。写入会更新组内所有任务及其已建 socket 的 cgroup classid，用于 tc 流分类。",
+      "when_to_increase": ["希望按 cgroup 分流到不同 tc 类"],
+      "when_to_decrease": ["希望调低 classid 或清空"],
+      "increasing": {
+        "good_for": ["调整 cgroup classid", "支持 tc 按 cgroup 分流"],
+        "bad_for": ["加剧 classid 误配风险"]
+      },
+      "decreasing": {
+        "good_for": ["调整 cgroup classid", "支持 tc 按 cgroup 分流"],
+        "bad_for": ["加剧 classid 误配风险"]
+      },
+      "consumes": ["net/core/netclassid_cgroup.c:write_classid", "net/core/netclassid_cgroup.c:update_classid_task"],
+      "version_notes": "写后会 iterate_fd 批量更新已建 socket 的 sk_cgrp_data.classid（每 1000 fd 释放一次 task_lock）。"
+    },
+    {
+      "name": "fb_tunnels",
+      "kernel_name": "fb_tunnels_only_for_init_net_sysctl_setup",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定（默认行为等同 0=每个 netns 都建 fallback tunnel）",
+      "range": {},
+      "summary": "boot cmdline 参数 fb_tunnels=：控制 fallback tunnel 创建策略。initns=仅 init_net 建、none=都不建。与 sysctl_fb_tunnels_only_for_init_net 同源变量。",
+      "when_to_increase": ["boot 时即希望收窄 fallback tunnel（设 initns/none）"],
+      "when_to_decrease": ["boot 时希望每个 netns 都建 fallback tunnel"],
+      "increasing": {
+        "good_for": ["(boot 时收窄 fallback tunnel 创建)"],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": ["(boot 时放宽 fallback tunnel 创建)"],
+        "bad_for": []
+      },
+      "boot_only": true,
+      "consumes": ["net/core/sysctl_net_core.c:fb_tunnels_only_for_init_net_sysctl_setup", "net/core/sysctl_net_core.c:778"],
+      "version_notes": "__setup(\"fb_tunnels=\", ...)；运行时通过 /proc/sys/net/core/fb_tunnels_only_for_init_net 调（同变量）。仅 initns/none 两个值，其他值忽略保持 0。"
+    },
+    {
+      "name": "tcpmhash_entries",
+      "kernel_name": "set_tcpmhash_entries",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定（按内存自动决定：>=128K 页=16384，否则 8192）",
+      "range": {},
+      "summary": "boot cmdline 参数 tcpmhash_entries=：覆盖 tcp_metrics 哈希表槽位数。缺省按 totalram_pages 自动决定。",
+      "when_to_increase": ["大量 TCP 连接导致 tcp_metrics 表冲突率高"],
+      "when_to_decrease": ["tcp_metrics 表内存吃紧"],
+      "increasing": {
+        "good_for": ["放大 tcp_metrics 哈希表", "降低冲突"],
+        "bad_for": ["加剧 tcp_metrics 表内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["缩小 tcp_metrics 哈希表", "降低内存占用"],
+        "bad_for": ["加剧冲突", "降低 metrics 命中"]
+      },
+      "boot_only": true,
+      "consumes": ["net/ipv4/tcp_metrics.c:1002", "net/ipv4/tcp_metrics.c:1017", "net/ipv4/tcp_metrics.c:1050"],
+      "version_notes": "__setup(\"tcpmhash_entries=\", ...)；仅在 boot 时生效，运行时不可改。"
+    },
+    {
+      "name": "uhash_entries",
+      "kernel_name": "set_uhash_entries",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定（按内存自动决定）",
+      "range": {},
+      "summary": "boot cmdline 参数 uhash_entries=：覆盖 UDP 哈希表槽位数。低于 UDP_HTABLE_SIZE_MIN 会被抬升。",
+      "when_to_increase": ["大量 UDP 连接导致 UDP 表冲突率高"],
+      "when_to_decrease": ["UDP 表内存吃紧"],
+      "increasing": {
+        "good_for": ["放大 UDP 哈希表", "降低冲突"],
+        "bad_for": ["加剧 UDP 表内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["缩小 UDP 哈希表", "降低内存占用"],
+        "bad_for": ["加剧冲突", "降低 UDP 查找性能"]
+      },
+      "boot_only": true,
+      "consumes": ["net/ipv4/udp.c:3619", "net/ipv4/udp.c:3637", "net/ipv4/udp.c:3879"],
+      "version_notes": "__setup(\"uhash_entries=\", ...)；低于 UDP_HTABLE_SIZE_MIN 会被抬升。"
+    },
+    {
+      "name": "thash_entries",
+      "kernel_name": "set_thash_entries",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "未指定（按内存自动决定，ehash 默认每 2MB 一槽）",
+      "range": {},
+      "summary": "boot cmdline 参数 thash_entries=：覆盖 TCP ehash（established 表）槽位数。缺省按内存自动决定。",
+      "when_to_increase": ["大量 TCP 连接导致 ehash 冲突率高"],
+      "when_to_decrease": ["TCP ehash 内存吃紧"],
+      "increasing": {
+        "good_for": ["放大 TCP ehash", "降低连接查找冲突"],
+        "bad_for": ["加剧 TCP ehash 内存占用"]
+      },
+      "decreasing": {
+        "good_for": ["缩小 TCP ehash", "降低内存占用"],
+        "bad_for": ["加剧冲突", "降低 TCP 连接查找性能"]
+      },
+      "boot_only": true,
+      "consumes": ["net/ipv4/tcp.c:5163", "net/ipv4/tcp.c:5300", "net/ipv4/tcp.c:5321"],
+      "version_notes": "__setup(\"thash_entries=\", ...)；影响 ehash、bhash、bind2_hash 等多个 TCP 子表。"
+    },
+    {
+      "name": "carrier_timeout",
+      "kernel_name": "set_carrier_timeout",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": 120,
+      "range": {},
+      "summary": "boot cmdline 参数 carrier_timeout=：ipconfig 等待网卡载波 up 的超时秒数（默认 120s）。",
+      "when_to_increase": ["boot 时网卡载波稳定慢，希望更久等待"],
+      "when_to_decrease": ["希望更快 boot 失败", "载波稳定快"],
+      "increasing": {
+        "good_for": ["放大载波等待时长", "降低慢链路 boot 失败概率"],
+        "bad_for": ["加剧 boot 时延"]
+      },
+      "decreasing": {
+        "good_for": ["缩短载波等待", "加速 boot"],
+        "bad_for": ["加剧慢链路 boot 失败概率"]
+      },
+      "boot_only": true,
+      "consumes": ["net/ipv4/ipconfig.c:103", "net/ipv4/ipconfig.c:279", "net/ipv4/ipconfig.c:296"],
+      "version_notes": "__setup(\"carrier_timeout=\", ...)；仅 ipconfig（内核 IP 配置）路径消费。"
+    }
+  ]
+}

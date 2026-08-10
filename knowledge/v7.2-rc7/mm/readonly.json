@@ -1,0 +1,168 @@
+{
+  "module": "mm",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "name": "current",
+      "kernel_name": "memory_current_read",
+      "path": "/sys/fs/cgroup/memory.<name>/current",
+      "category": "readonly",
+      "gate": "CONFIG_MEMCG",
+      "summary": "cgroup 当前内存使用量(字节,=page_counter_read(&memcg->memory)*PAGE_SIZE,含 anon+file+slab)。",
+      "use": "配 memory.high/max 判断是否触限;配 memory.stat 看用量构成;配 memory.events 看 high/max 触发次数。"
+    },
+    {
+      "name": "events",
+      "kernel_name": "memory_events_show",
+      "path": "/sys/fs/cgroup/memory.<name>/events",
+      "category": "readonly",
+      "gate": "CONFIG_MEMCG",
+      "summary": "cgroup 累计事件计数(low/high/max/oom/oom_kill/oom_group_kill/sock_throttled),含子组。",
+      "use": "读 high>0 说明 memory.high 触过限;max>0 说明 memory.max 触过;oom_kill>0 说明 OOM 已发生。"
+    },
+    {
+      "name": "events.local",
+      "kernel_name": "memory_events_local_show",
+      "path": "/sys/fs/cgroup/memory.<name>/events.local",
+      "category": "readonly",
+      "gate": "CONFIG_MEMCG",
+      "summary": "cgroup 自身(不含子组)事件计数,字段同 events。",
+      "use": "对比 events 与 events.local 定位是哪个子组触限:某子组 events.local.high>0 而 events.high 远大于自身,说明触限来源在后代。"
+    },
+    {
+      "name": "stat",
+      "kernel_name": "memory_stat_show",
+      "path": "/sys/fs/cgroup/memory.<name>/stat",
+      "category": "readonly",
+      "gate": "CONFIG_MEMCG",
+      "summary": "cgroup 详细统计(anon/file/slab/pgfault/pglazyfree 等多项),由 memory_stat_format 输出。",
+      "use": "读 anon=anon 用量、file=file cache、slab=slab 占用、pgfault/pgmajfault 看故障率;与 current 一起分析配额构成。"
+    },
+    {
+      "name": "numa_stat",
+      "kernel_name": "memory_numa_stat_show",
+      "path": "/sys/fs/cgroup/memory.<name>/numa_stat",
+      "category": "readonly",
+      "gate": "CONFIG_NUMA",
+      "summary": "cgroup 各 NUMA node 的内存分布(total/anon/file/sluggish_per_node 等)。",
+      "use": "看 N0/N1... 比例判断 cgroup 内存是否跨 node,决定是否需要调整 cpuset.mems 或开启 NUMA balancing。"
+    },
+    {
+      "name": "swap.current",
+      "kernel_name": "swap_current_read",
+      "path": "/sys/fs/cgroup/memory.<name>/swap.current",
+      "category": "readonly",
+      "gate": "CONFIG_SWAP",
+      "summary": "cgroup 当前 swap 用量(字节,=page_counter_read(&memcg->swap)*PAGE_SIZE)。",
+      "use": "配 swap.max/high 判断是否触限;配 swap.events 看触发次数;配 memory.current 算 swap 占总内存比。"
+    },
+    {
+      "name": "swap.events",
+      "kernel_name": "swap_events_show",
+      "path": "/sys/fs/cgroup/memory.<name>/swap.events",
+      "category": "readonly",
+      "gate": "CONFIG_SWAP",
+      "summary": "cgroup swap 事件计数(high/max)。",
+      "use": "high>0 说明 swap.high 触过限(限速);max>0 说明 swap.max 触过(写 swap 被拒)。"
+    },
+    {
+      "name": "zswap.current",
+      "kernel_name": "zswap_current_read",
+      "path": "/sys/fs/cgroup/memory.<name>/zswap.current",
+      "category": "readonly",
+      "gate": "CONFIG_SWAP CONFIG_ZSWAP",
+      "summary": "cgroup zswap 压缩缓存当前用量(字节,=memcg_page_state(MEMCG_ZSWAP_B))。读时会先 mem_cgroup_flush_stats。",
+      "use": "配 zswap.max 判断压缩池是否满;配 swap.current 看 swap+zswap 总量;配 memory.current 看压缩节省比。"
+    },
+    {
+      "name": "buddyinfo",
+      "kernel_name": "fragmentation_op",
+      "path": "/proc/buddyinfo",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_FS",
+      "summary": "每节点每 zone 每 order 的空闲页块数(frag_show_print)。order0..NR_PAGE_ORDERS。",
+      "use": "看高 order(如 order-9=2MB,order-10=4MB)是否还有空闲块;若高 order 全 0 而低 order 多 → 外部碎片严重,考虑 compact_memory 触发紧缩或调 compaction_proactiveness。"
+    },
+    {
+      "name": "pagetypeinfo",
+      "kernel_name": "pagetypeinfo_op",
+      "path": "/proc/pagetypeinfo",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_FS",
+      "summary": "每节点每 zone 每 migratetype 每 order 的空闲块数(pagetypeinfo_showfree/_showblockcount/_showmixedcount)。",
+      "use": "看 movable 类型是否被 unmovable/reclaimable 污染(showmixedcount 揭示同 pageblock 内混合类型);若污染多,需 compact_unevictable_allowed / 调 anti-fragmentation。"
+    },
+    {
+      "name": "vmstat",
+      "kernel_name": "vmstat_op",
+      "path": "/proc/vmstat",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_FS",
+      "summary": "全局/zone 内存与回收统计事件计数器(vmstat_show),如 pgalloc/pgmajfault/pgsteal_kswapd/pgscan_kswapd/compact_stall 等。",
+      "use": "pgsteal_kswapd/pgscan_kswapd 比例看回收效率;compact_stall>0 说明曾因紧缩而 stall;pgmajfault 高 → IO 压力;作为 swappiness/watermark/compaction 调参依据。注意读前可 echo 1 > /proc/sys/vm/stat_refresh 强制同步 per-CPU 计数。"
+    },
+    {
+      "name": "zoneinfo",
+      "kernel_name": "zoneinfo_op",
+      "path": "/proc/zoneinfo",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_FS",
+      "summary": "每 zone 的尺寸/水位(min/low/high)/managed/present/spanned/per-cpu batch&high/lowmem_reserve/numa stats(zoneinfo_show_print)。",
+      "use": "看 zone 的 min/low/high 实际值,判断 min_free_kbytes / watermark_scale_factor / watermark_boost_factor 调参效果;看 lowmem_reserve 验证 lowmem_reserve_ratio 设置生效;看 per-cpu batch/high 验证 percpu_pagelist_high_fraction 生效。"
+    },
+    {
+      "name": "maps",
+      "kernel_name": "proc_pid_maps_operations",
+      "path": "/proc/<pid>/maps",
+      "category": "readonly",
+      "gate": "",
+      "summary": "/proc/<pid>/maps:每行一段 VMA,格式 [start-end perms offset major:minor inode pathname]。来自 proc_pid_maps_operations(m_show)。",
+      "use": "看进程地址布局,VMA 数量(配 max_map_count 调参);看 [heap]/[stack] 位置判断 ASLR;看路径密集度判断碎片化。"
+    },
+    {
+      "name": "numa_maps",
+      "kernel_name": "proc_pid_numa_maps_operations",
+      "path": "/proc/<pid>/numa_maps",
+      "category": "readonly",
+      "gate": "CONFIG_NUMA",
+      "summary": "/proc/<pid>/numa_maps:每 VMA 的 NUMA 页分布,字段 N0= N1= ... total= used= ...",
+      "use": "看每 VMA 的内存跨 node 程度;若大量 VMA 跨 N0/N1 → NUMA 局部性差,考虑调 numa_balancing / zone_reclaim_mode / cpuset.mems。"
+    },
+    {
+      "name": "smaps",
+      "kernel_name": "proc_pid_smaps_operations",
+      "path": "/proc/<pid>/smaps",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_PAGE_MONITOR",
+      "summary": "/proc/<pid>/smaps:每 VMA 的详细 RSS/PSS/Anonymous/Swap/Private/Private_Clean/Private_Dirty/Referenced 等字段(__show_smap)。",
+      "use": "PSS(proportional set size)=该 VMA 真实占用(考虑共享比例);Anonymous 多→回收倾向 anon swap;Referenced=被访问过;配 clear_refs(写4重置 soft-dirty,再读 smaps 看 Referenced 增量做 workingset 采样)。"
+    },
+    {
+      "name": "smaps_rollup",
+      "kernel_name": "proc_pid_smaps_rollup_operations",
+      "path": "/proc/<pid>/smaps_rollup",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_PAGE_MONITOR",
+      "summary": "/proc/<pid>/smaps_rollup:整个进程的 smaps 字段汇总(单条,Rss/Pss/Uss 等聚合值,show_smaps_rollup)。",
+      "use": "快速看进程内存总量与共享比例,无需解析多行 smaps;Pss_Rss 比例看共享程度;配 oom_score 看是否被高估。"
+    },
+    {
+      "name": "pagemap",
+      "kernel_name": "proc_pagemap_operations",
+      "path": "/proc/<pid>/pagemap",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_PAGE_MONITOR",
+      "summary": "/proc/<pid>/pagemap:每页一个 PM_ENTRY_BYTES 位图条目,含物理页帧/swap entry/存在位/soft-dirty 位(pagemap_read)。需 llseek 对齐 PM_ENTRY_BYTES。",
+      "use": "精确查每页物理位置或是否在 swap;配 /proc/kpageflags / /proc/kpagecount 做内存映射分析;配 clear_refs(4) 重置 soft-dirty 后读 pagemap 看 workingset 增量。"
+    },
+    {
+      "name": "oom_score",
+      "kernel_name": "proc_oom_score",
+      "path": "/proc/<pid>/oom_score",
+      "category": "readonly",
+      "gate": "",
+      "summary": "/proc/<pid>/oom_score:OOM killer 给该进程的 badness 分数(0-1000 线性映射,=1000 时最易被杀)。proc_oom_score 输出。",
+      "use": "看哪些进程 oom_score 高,预判 OOM 时被杀对象;高 score 进程若关键 → 用 oom_score_adj=-1000 降权(在 /proc/<pid>/oom_score_adj,非本表);也可看 oom_score_adj 调整是否生效。"
+    }
+  ]
+}

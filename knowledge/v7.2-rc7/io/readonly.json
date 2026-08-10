@@ -1,0 +1,33 @@
+{
+  "module": "io",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "name": "stat",
+      "kernel_name": "blkcg_print_stat",
+      "path": "/sys/fs/cgroup/io.<name>/stat",
+      "category": "readonly",
+      "gate": "",
+      "summary": "io cgroup per-device IO 统计汇总。每行格式 '<devname> rbytes=.. wbytes=.. dbytes=.. rios=.. wios=.. dios=..'（可选追加 use_delay=.. delay_nsec=.. 当 blkcg_debug_stats 开）。root cgroup 用系统级 disk_stats 回填，非 root 用 blkg->iostat rstat。",
+      "use": "读每设备的 rbytes/wbytes/dbytes/rios/wios/dios 看 cgroup 在各块设备上的 IO 吞吐与计数；按设备聚合算该组的 IO 占比，结合权重(weight)判断份额是否兑现。delay_nsec 反映 iocost 对该组的延迟惩罚。blkcg_print_stat 还会调用各 policy 的 pd_stat_fn（iocost 的 vtime/busy 等会追加在行尾）——这是 cgroup 级 IO 视图，与 /proc/diskstats 的系统级视图互补。"
+    },
+    {
+      "name": "diskstats",
+      "kernel_name": "diskstats_op",
+      "path": "/proc/diskstats",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_FS",
+      "summary": "/proc/diskstats 系统级 per-块设备/分区 IO 统计。每行 17+ 列：major minor name rio rmerge rsect ruse_ms wio wmerge wsect wuse inflight io_ticks_ms aveq_ms discard* flush*。每设备一行（含分区，空分区跳过）。inflight 时会先 update_io_ticks 保活。",
+      "use": "读每设备的 rios/wios/dios/flushes 看读/写/丢弃/flush 的次数，sectors 看吞吐量（×512=字节），io_ticks/aveq_ms 看设备忙率与队列占用，inflight 看当前未完成 IO 数。诊断磁盘瓶颈类型：ruse/wuse 占比高=设备饱和；merges 高=合并好；flush 多=fsync 重。按设备对比找热点盘，是 iocost/ioprio 调参前先看 IO 在哪盘、什么类型的入口。"
+    },
+    {
+      "name": "partitions",
+      "kernel_name": "partitions_op",
+      "path": "/proc/partitions",
+      "category": "readonly",
+      "gate": "CONFIG_PROC_FS",
+      "summary": "/proc/partitions 块设备/分区列表（major minor #blocks name），跳过 0 容量与 GENHD_FL_HIDDEN 设备。#blocks = sectors>>1（即 1K 块数）。无 IO 计数，纯拓扑视图。",
+      "use": "读设备/分区拓扑——拿到 major:minor 和容量，对应 diskstats 的设备名做关联（diskstats 第一列 major/minor 与这里一致）。判断哪些设备/分区存在、容量多少，作为 IO 诊断的设备清单入口。"
+    }
+  ]
+}

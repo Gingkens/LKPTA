@@ -1,0 +1,293 @@
+{
+  "module": "io",
+  "version": "v7.2-rc7",
+  "_doc": "io 专家的流程层。三种模式由消费者 agent 选择如何使用本文件：intelligent(靠capabilities自由推理) / rule(固定if-then匹配) / hybrid(规则优先、无命中转智能)。query.py 的 --mode 只决定展示哪部分原料，真正用哪种推理是消费者自己的行为——playbook 供弹药不强制走哪条路。所有 lever/observe 引用都用 kernel_name 或 path 锚定现有 tunable/readonly，不复制参数详情(避免冗余+版本漂移)。io 模块参数少(9 行)，capabilities 不多但求准：cgroup-io-quota、io-stats-observation、io-scheduler。elevator/bdev_allow_write_mounted 是 boot_only cmdline，调它们需 reboot。",
+  "modes": {
+    "intelligent": {
+      "description": "把 io 当专家。消费者靠 capabilities + observation_map + thresholds + leverage_map 推理下一步读什么、判什么、动哪个参数。LLM 自主决策，playbook 只提供专家方法论与映射，不写死步骤。",
+      "how_to_use": "消费者拿到 profiling 描述后：(1) 读 capabilities 的 when_applies 判断属哪类问题；(2) 用 observation_map 找该读的 readonly；(3) 读值后用 thresholds 判异常；(4) 用 leverage_map 映射到候选 tunable 族；(5) 取 tunable(用 query.py --name <kernel_name>) 的 increasing/decreasing 决定调向。允许推理跳出 playbook——如 profiling 指向非 io 问题(CPU/内存)时建议转模块。"
+    },
+    "rule": {
+      "description": "固定 if-then 规则驱动。消费者按 rules 逐条匹配 trigger(symptom/keywords)，命中则按 steps 顺序执行 read→judge→recommend。不靠 LLM 推理，可复现、可审计。",
+      "how_to_use": "消费者描述 profiling 后，遍历 rules：trigger 命中即按 steps 执行。无命中则报告'无规则匹配，建议转 intelligent 模式'。规则命中的结论可附 fallback_to_capability 指回 capabilities 做补充。"
+    },
+    "hybrid": {
+      "description": "规则先尝试，命中则用规则结论但附智能推理的补充建议；规则无命中则转 intelligent 模式自由推理。兼顾可复现与覆盖度。",
+      "how_to_use": "先跑 rule 模式；有命中→输出规则结论 + 用 capabilities 补充'规则可能漏的角度'；无命中→转 intelligent 模式。"
+    }
+  },
+  "capabilities": [
+    {
+      "id": "cgroup-io-quota",
+      "name": "cgroup IO 份额/QoS 诊断",
+      "when_applies": "profiling 显示某 cgroup 在块设备上 IO 延迟差、被其他组挤压，或 cgroup 间 IO 份额不公，或要给关键组按延迟 SLA 分配带宽。",
+      "reasoning": "先读 io.<name>/stat 的 per-device rbytes/wbytes/rios/wios + iocost policy 行尾的 vtime/busy/delay_nsec 看该 cgroup 在各盘上分到多少、是否被 iocost 加 delay。再读 /proc/diskstats 同设备的 io_ticks/aveq 看设备是否已饱和——设备没饱和时调权重能调出份额差异，饱和后纯调权重只是切蛋糕。如果关键组延迟 SLA 没达标：看 cost.qos 当前是 auto 还是 user，auto 模式 vrate 会自适应，要按硬 SLA 控制得 ctrl=user 设 rlat/wlat。prio.class 可让关键组 IO 提为 RT 抢调度，但需 IO scheduler 支持 IOPRIO。注意 weight 是份额不是配额、iocost 与 ioprio 是两个独立控制器可叠加。",
+      "observe": [
+        "blkcg_print_stat",
+        "diskstats_op"
+      ],
+      "candidate_levers": [
+        "ioc_weight_write",
+        "ioc_qos_write",
+        "ioprio_set_prio_policy"
+      ]
+    },
+    {
+      "id": "io-stats-observation",
+      "name": "IO 统计观测",
+      "when_applies": "profiling 模糊、不知道 IO 瓶颈在哪个盘/哪个 cgroup/什么类型，需要先做归因诊断。",
+      "reasoning": "纯观测能力，不直接调参。先读 /proc/partitions 拿设备清单（major:minor 与容量），再读 /proc/diskstats 每设备的 rios/wios/dio/flush/merges/sectors/io_ticks/inflight 找热点盘与 IO 类型（读多/写多/discard/flush 重？），最后读 io.<name>/stat 把系统级 IO 归因到 cgroup（哪个组在哪个盘上贡献了多少）。按盘聚合算 cgroup 占比。如果 io.<name>/stat 看到某 cgroup delay_nsec 高=iocost 在惩罚它，说明该组超出权重份额被限流。这一步是后续调 weight/qos/prio.class 的前提——盲调是反模式。",
+      "observe": [
+        "partitions_op",
+        "diskstats_op",
+        "blkcg_print_stat"
+      ],
+      "candidate_levers": []
+    },
+    {
+      "id": "io-scheduler",
+      "name": "块设备 IO 调度",
+      "when_applies": "profiling 显示设备 IO 调度行为不理想（合并差、饥饿、延迟抖动），或要切换 IO 调度器；或担心裸写已挂载设备损坏 fs。",
+      "reasoning": "本能力主要做边界提示而非直接调参：boot cmdline 的 elevator= 已废弃（handler 只 pr_warn），改 IO 调度器要写 /sys/block/<dev>/queue/scheduler（不在本工单覆盖范围）。本模块可调的只剩 bdev_allow_write_mounted（boot-only，关闭后阻止对已挂载设备的写打开，保护 fs）。运维场景需对挂载根设备写打开（fsck rw、ext4 在线特性修改）才考虑开启；生产加固可关闭。改它需 reboot。如果 profiling 真的需要换 IO 调度器策略，引导消费者去 sysfs 而非 cmdline。",
+      "observe": [],
+      "candidate_levers": [
+        "setup_bdev_allow_write_mounted",
+        "elevator_setup"
+      ]
+    }
+  ],
+  "observation_map": {
+    "_doc": "症状信号 → 该读的 readonly(path/kernel_name/字段)。让消费者知道'看到 X 该查 Y'。智能模式当推理依据，规则模式当 read 目标。每条结构：path=readonly 路径(占位符保留), fields=该路径里要读的字段, read=对应 readonly 的 kernel_name, meaning=该信号揭示什么。tunable 的'当前值'不在此(非 readonly),配置态观察见 capabilities.reasoning。",
+    "cgroup_io_lagging": {
+      "path": "/sys/fs/cgroup/io.<name>/stat|/proc/diskstats",
+      "fields": [
+        "rbytes",
+        "wbytes",
+        "rios",
+        "wios",
+        "delay_nsec",
+        "use_delay",
+        "io_ticks",
+        "aveq",
+        "inflight"
+      ],
+      "read": "blkcg_print_stat|diskstats_op",
+      "meaning": "io.<name>/stat 的 per-device rbytes/wbytes + delay_nsec 揭示该 cgroup 在各盘的 IO 量与是否被 iocost 限流；/proc/diskstats 的 io_ticks/aveq/inflight 揭示设备是否饱和。指向 cgroup-io-quota。weight/cost.qos 当前值需读 tunable 路径,非 readonly。"
+    },
+    "unknown_io_bottleneck": {
+      "path": "/proc/partitions|/proc/diskstats|/sys/fs/cgroup/io.<name>/stat",
+      "fields": [
+        "major",
+        "minor",
+        "#blocks",
+        "name",
+        "rio",
+        "wio",
+        "dio",
+        "flush",
+        "merges",
+        "sectors",
+        "io_ticks",
+        "inflight",
+        "rbytes",
+        "wbytes",
+        "rios",
+        "wios"
+      ],
+      "read": "partitions_op|diskstats_op|blkcg_print_stat",
+      "meaning": "partitions 拿设备清单→diskstats 找热点盘与 IO 类型→io.<name>/stat 把系统级 IO 归因到 cgroup。三步归因流程，指向 io-stats-observation。这是任何 IO 调参前的入口。"
+    },
+    "fs_corruption_risk": {
+      "path": "/proc/mounts|/proc/diskstats",
+      "fields": [
+        "mounted devices",
+        "inflight",
+        "io_ticks"
+      ],
+      "read": "partitions_op(配合 /proc/mounts)",
+      "meaning": "/proc/mounts 列出已挂载的块设备；如果担心失控进程裸写已挂载设备损坏 fs，bdev_allow_write_mounted 是相关 boot-only 开关。指向 io-scheduler。"
+    }
+  },
+  "thresholds": {
+    "_doc": "判据规则：readonly 值落在什么范围算异常。给智能模式当推理依据，给规则模式当 judge 条件。阈值是经验值不是源码硬约束，现场可调，别当铁律。",
+    "device_busy_ratio": {
+      "desc": "io_ticks_ms / sample_window_ms (采样窗口内设备忙时占比)",
+      "warn_if_gt": 0.8,
+      "meaning": "设备忙率超 80% → 设备饱和，纯调 weight 只是切蛋糕不会增加总带宽，需考虑 ioprio/iocost QoS 或加盘"
+    },
+    "cgroup_io_share_gap": {
+      "desc": "实际 IO 份额 / 期望份额(由 weight 比例算)",
+      "warn_if_lt": 0.5,
+      "warn_if_gt": 2.0,
+      "meaning": "实际份额偏离期望 50% 以下或 2 倍以上 → iocost 分配不公或设备饱和导致权重未兑现"
+    },
+    "iocost_delay_nsec_active": {
+      "desc": "io.<name>/stat 的 use_delay 字段非 0 / delay_nsec 持续增长",
+      "warn_if_gt": 0,
+      "meaning": "use_delay>0 表示该 cgroup 当前正被 iocost 限流(delay_nsec 累计)。被限流未必是问题（按权重就该被限），但要确认权重设得对。"
+    },
+    "inflight_saturated": {
+      "desc": "/proc/diskstats inflight 持续接近 queue_depth",
+      "warn_if_gt": 0.8,
+      "meaning": "inflight 持续接近设备 queue_depth → 设备队列满，IO 在 blk 层排队，调 iocost 可能有助于公平但增不了总吞吐"
+    }
+  },
+  "leverage_map": {
+    "_doc": "症状类别 → 候选 tunable 族(kernel_name 引用，不复制参数详情)。消费者拿 kernel_name 去 query.py --name 取 increasing/decreasing 决定调向。",
+    "cgroup-io-quota": [
+      "ioc_weight_write",
+      "ioc_qos_write",
+      "ioprio_set_prio_policy"
+    ],
+    "io-stats-observation": [],
+    "io-scheduler": [
+      "setup_bdev_allow_write_mounted",
+      "elevator_setup"
+    ]
+  },
+  "interactions": {
+    "_doc": "参数间依赖/互斥/顺序——消费者调 A 时联动 B。boot_only 列的是运行时不可改的(改需 reboot)。mutex 是互斥语义。",
+    "pairs": [
+      {
+        "relation": "weight 是份额比例，cost.qos 是延迟 SLA。weight 决定 cgroup 间分蛋糕比例，cost.qos 决定 iocost 用什么 vrate 跑、延迟目标多紧。两者共同决定 cgroup 的实际 IO 延迟与带宽：权重给占比、QoS 给延迟边界。同向调可能矛盾——提权重要看 QoS 是否还能满足。",
+        "params": [
+          "ioc_weight_write",
+          "ioc_qos_write"
+        ]
+      },
+      {
+        "relation": "cost.qos 与 cost.model 配对：QoS 的 rlat/wlat/min/max 影响可接受的 vrate 范围，cost.model 的 rbps/wbps/IOPS 系数决定 vtime 成本核算。model 设错会让 vrate 失准，进而让 QoS 目标按错的速率计算。改 model 后建议重读 qos 当前值确认 SLA 仍合理。",
+        "params": [
+          "ioc_qos_write",
+          "ioc_cost_model_write"
+        ]
+      },
+      {
+        "relation": "iocost（weight/qos/model）与 ioprio（prio.class）是两个独立控制器：iocost 控 vtime 份额与延迟，ioprio 控 bio 的 IO 优先级类（影响 IO scheduler 排序）。两者可叠加——关键组可既提 weight 又 promote-to-rt；但都生效需 IO scheduler 支持 IOPRIO 与 iocost 已 attach 该设备。",
+        "params": [
+          "ioc_weight_write",
+          "ioprio_set_prio_policy"
+        ]
+      },
+      {
+        "relation": "两者都是 boot_only cmdline。elevator 已废弃（handler 只 pr_warn 不生效），bdev_allow_write_mounted 仍生效但改需 reboot。改 elevator 用 /sys/block/<dev>/queue/scheduler（非 cmdline）；改 bdev_allow_write_mounted 改 grub 重启。",
+        "params": [
+          "setup_bdev_allow_write_mounted",
+          "elevator_setup"
+        ]
+      }
+    ],
+    "boot_only": [
+      "setup_bdev_allow_write_mounted",
+      "elevator_setup"
+    ],
+    "mutex": [
+      "elevator_setup 已废弃：boot cmdline elevator= 在 v7.2 仅 pr_warn 不再生效。改 IO 调度器必须用 /sys/block/<dev>/queue/scheduler（sysfs，非本工单覆盖范围）。"
+    ]
+  },
+  "rules": [
+    {
+      "id": "R1-cgroup-io-share-unfair",
+      "trigger": {
+        "symptom": "某 cgroup 块设备 IO 延迟差、份额被挤或与其他组不公",
+        "keywords": [
+          "io",
+          "cgroup",
+          "份额",
+          "weight",
+          "延迟",
+          "iocost",
+          "block",
+          "disk"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/sys/fs/cgroup/io.<name>/stat",
+          "field": "per-device rbytes/wbytes/rios/wios/delay_nsec/use_delay",
+          "note": "看该 cgroup 在各盘的 IO 量与是否被 iocost 限流(delay_nsec>0/use_delay)"
+        },
+        {
+          "read": "/proc/diskstats",
+          "field": "io_ticks aveq inflight",
+          "judge": "device_busy_ratio > 0.8 → 设备饱和，纯调 weight 切蛋糕不增总带宽"
+        },
+        {
+          "judge": "cgroup_io_share_gap < 0.5 或 > 2.0 → iocost 分配不公或权重未兑现"
+        },
+        {
+          "recommend": "调大 ioc_weight_write(关键组提权) 或写 ioc_qos_write 设 ctrl=user + rlat/wlat 按延迟 SLA 控；若是 IO 优先级问题改 ioprio_set_prio_policy=promote-to-rt"
+        },
+        {
+          "verify": "调后重读 io.<name>/stat 的 rbytes/wbytes 与 delay_nsec，份额应向权重靠拢、delay 应消除"
+        }
+      ],
+      "fallback_to_capability": "cgroup-io-quota"
+    },
+    {
+      "id": "R2-unknown-io-bottleneck",
+      "trigger": {
+        "symptom": "IO 慢但不知瓶颈在哪盘/哪个 cgroup/什么类型",
+        "keywords": [
+          "io",
+          "慢",
+          "磁盘",
+          "瓶颈",
+          "iowait",
+          "diskstats",
+          "归因"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/partitions",
+          "field": "major minor #blocks name",
+          "note": "先拿设备清单与容量"
+        },
+        {
+          "read": "/proc/diskstats",
+          "field": "rio wio dio flush merges sectors io_ticks aveq inflight",
+          "judge": "io_ticks 高 + inflight 接近 queue_depth → 找到热点盘与设备饱和信号；rios/wios/dio/flush 占比揭示 IO 类型"
+        },
+        {
+          "read": "/sys/fs/cgroup/io.<name>/stat",
+          "field": "rbytes wbytes rios wios",
+          "judge": "把系统级 IO 归因到 cgroup——哪个组在哪个盘上贡献多少"
+        },
+        {
+          "recommend": "纯观测能力，归因后再据瓶颈类型决定调 ioc_weight_write/ioc_qos_write/ioprio_set_prio_policy；若设备饱和且无法加盘，调参只能改善公平不能提升总吞吐"
+        }
+      ],
+      "fallback_to_capability": "io-stats-observation"
+    },
+    {
+      "id": "R3-fs-corruption-protection",
+      "trigger": {
+        "symptom": "担心失控进程裸写已挂载块设备损坏文件系统、或运维需要对挂载根设备写打开",
+        "keywords": [
+          "bdev",
+          "write",
+          "mounted",
+          "fsck",
+          "corruption",
+          "block",
+          "裸写"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/mounts",
+          "field": "已挂载的块设备列表",
+          "note": "/proc/mounts 非 io 模块，但确认目标设备是否已挂载是必要前置"
+        },
+        {
+          "judge": "运维需对已挂载设备写打开（fsck rw、ext4 在线特性修改）→ 需要 bdev_allow_write_mounted=true；加固防误写 → 需要 false"
+        },
+        {
+          "recommend": "改 setup_bdev_allow_write_mounted（boot-only，改需 reboot 改 grub）。注意 elevator_setup 已废弃不生效，不要试图用 cmdline elevator 改 IO 调度器——用 /sys/block/<dev>/queue/scheduler"
+        }
+      ],
+      "fallback_to_capability": "io-scheduler"
+    }
+  ]
+}

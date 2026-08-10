@@ -1,0 +1,448 @@
+{
+  "module": "sched",
+  "version": "v7.2-rc7",
+  "sources": [
+    {
+      "mechanism": "debugfs_create_dir",
+      "locator": "kernel/sched/debug.c:sched_init_debug",
+      "filter": {
+        "dir": "sched",
+        "children": {
+          "files": [
+            "features",
+            "verbose",
+            "preempt",
+            "tunable_scaling",
+            "debug"
+          ],
+          "u32": [
+            "base_slice_ns",
+            "latency_warn_ms",
+            "latency_warn_once",
+            "migration_cost_ns",
+            "nr_migrate"
+          ]
+        }
+      },
+      "interface": "debugfs",
+      "path_prefix": "/sys/kernel/debug/sched"
+    },
+    {
+      "mechanism": "debugfs_create_dir",
+      "locator": "kernel/sched/debug.c:sched_init_debug",
+      "filter": {
+        "dir": "numa_balancing",
+        "parent": "sched",
+        "children": {
+          "u32": [
+            "scan_delay_ms",
+            "scan_period_min_ms",
+            "scan_period_max_ms",
+            "scan_size_mb",
+            "hot_threshold_ms"
+          ]
+        }
+      },
+      "interface": "debugfs",
+      "path_prefix": "/sys/kernel/debug/sched/numa_balancing"
+    },
+    {
+      "mechanism": "debugfs_create_dir",
+      "locator": "kernel/sched/debug.c:sched_init_debug",
+      "filter": {
+        "dir": "llc_balancing",
+        "parent": "sched",
+        "children": {
+          "files": [
+            "enabled"
+          ],
+          "u32": [
+            "aggr_tolerance",
+            "epoch_period",
+            "epoch_affinity_timeout",
+            "overaggr_pct",
+            "imb_pct"
+          ]
+        },
+        "config": "CONFIG_SCHED_CACHE"
+      },
+      "interface": "debugfs",
+      "path_prefix": "/sys/kernel/debug/sched/llc_balancing"
+    },
+    {
+      "mechanism": "debugfs_create_dir",
+      "locator": "kernel/sched/debug.c:update_sched_domain_debugfs",
+      "filter": {
+        "dir": "domains",
+        "parent": "sched",
+        "layout": "domains/cpuN/domainN",
+        "per_cpu": true,
+        "child_locator": "kernel/sched/debug.c:register_sd",
+        "child_dir_template": "cpuN/domainN",
+        "children": {
+          "files": [
+            "flags",
+            "groups_flags"
+          ],
+          "u32": [
+            "level",
+            "group_asym_prefer_cpu"
+          ],
+          "note": "register_sd 在每个 domainN 下创建 flags/groups_flags/level/group_asym_prefer_cpu"
+        }
+      },
+      "interface": "debugfs",
+      "path_prefix": "/sys/kernel/debug/sched/domains"
+    },
+    {
+      "mechanism": "debugfs_create_dir",
+      "locator": "kernel/sched/debug.c:debugfs_fair_server_init",
+      "filter": {
+        "dir": "fair_server",
+        "parent": "sched",
+        "layout": "fair_server/cpuN",
+        "per_cpu": true,
+        "child_dir_template": "cpuN",
+        "children": {
+          "files": [
+            "runtime",
+            "period"
+          ]
+        }
+      },
+      "interface": "debugfs",
+      "path_prefix": "/sys/kernel/debug/sched/fair_server"
+    },
+    {
+      "mechanism": "debugfs_create_dir",
+      "locator": "kernel/sched/debug.c:debugfs_ext_server_init",
+      "filter": {
+        "dir": "ext_server",
+        "parent": "sched",
+        "layout": "ext_server/cpuN",
+        "per_cpu": true,
+        "child_dir_template": "cpuN",
+        "children": {
+          "files": [
+            "runtime",
+            "period"
+          ]
+        }
+      },
+      "interface": "debugfs",
+      "path_prefix": "/sys/kernel/debug/sched/ext_server"
+    },
+    {
+      "mechanism": "sched_feat",
+      "locator": "kernel/sched/features.h",
+      "filter": {
+        "macro": "SCHED_FEAT",
+        "exposed_via": "kernel/sched/debug.c:sched_init_debug (features 文件)"
+      },
+      "interface": "debugfs",
+      "path_prefix": "/sys/kernel/debug/sched/features"
+    },
+    {
+      "mechanism": "register_sysctl_init",
+      "locator": "kernel/sched/core.c:sched_core_sysctl_init",
+      "filter": {
+        "table": "sched_core_sysctls",
+        "procname": [
+          "sched_schedstats",
+          "sched_util_clamp_min",
+          "sched_util_clamp_max",
+          "sched_util_clamp_min_rt_default",
+          "numa_balancing"
+        ],
+        "config": [
+          "CONFIG_SCHEDSTATS",
+          "CONFIG_UCLAMP_TASK",
+          "CONFIG_NUMA_BALANCING"
+        ]
+      },
+      "interface": "sysctl",
+      "path_prefix": "/proc/sys/kernel"
+    },
+    {
+      "mechanism": "register_sysctl_init",
+      "locator": "kernel/sched/fair.c:sched_fair_sysctl_init",
+      "filter": {
+        "table": "sched_fair_sysctls",
+        "procname": [
+          "sched_cfs_bandwidth_slice_us",
+          "numa_balancing_promote_rate_limit_MBps"
+        ],
+        "config": [
+          "CONFIG_CFS_BANDWIDTH",
+          "CONFIG_NUMA_BALANCING"
+        ]
+      },
+      "interface": "sysctl",
+      "path_prefix": "/proc/sys/kernel"
+    },
+    {
+      "mechanism": "register_sysctl_init",
+      "locator": "kernel/sched/rt.c:sched_rt_sysctl_init",
+      "filter": {
+        "table": "sched_rt_sysctls",
+        "procname": [
+          "sched_rt_period_us",
+          "sched_rt_runtime_us",
+          "sched_rr_timeslice_ms"
+        ]
+      },
+      "interface": "sysctl",
+      "path_prefix": "/proc/sys/kernel"
+    },
+    {
+      "mechanism": "register_sysctl_init",
+      "locator": "kernel/sched/deadline.c:sched_dl_sysctl_init",
+      "filter": {
+        "table": "sched_dl_sysctls",
+        "procname": [
+          "sched_deadline_period_max_us",
+          "sched_deadline_period_min_us"
+        ]
+      },
+      "interface": "sysctl",
+      "path_prefix": "/proc/sys/kernel"
+    },
+    {
+      "mechanism": "register_sysctl_init",
+      "locator": "kernel/sched/autogroup.c:sched_autogroup_sysctl_init",
+      "filter": {
+        "table": "sched_autogroup_sysctls",
+        "procname": [
+          "sched_autogroup_enabled"
+        ],
+        "config": [
+          "CONFIG_SCHED_AUTOGROUP"
+        ]
+      },
+      "interface": "sysctl",
+      "path_prefix": "/proc/sys/kernel"
+    },
+    {
+      "mechanism": "register_sysctl_init",
+      "locator": "kernel/sched/topology.c:sched_energy_aware_sysctl_init",
+      "filter": {
+        "table": "sched_energy_aware_sysctls",
+        "procname": [
+          "sched_energy_aware"
+        ]
+      },
+      "interface": "sysctl",
+      "path_prefix": "/proc/sys/kernel"
+    },
+    {
+      "mechanism": "cftype",
+      "locator": "kernel/sched/core.c:cpu_cgrp_subsys",
+      "filter": {
+        "cftype_array": "cpu_files",
+        "cftype_locator": "kernel/sched/core.c:cpu_files",
+        "binding": "dfl_cftypes",
+        "subsys": "cpu_cgrp_subsys",
+        "name": [
+          "weight",
+          "weight.nice",
+          "idle",
+          "max",
+          "max.burst",
+          "uclamp.min",
+          "uclamp.max"
+        ],
+        "config": [
+          "CONFIG_GROUP_SCHED_WEIGHT",
+          "CONFIG_GROUP_SCHED_BANDWIDTH",
+          "CONFIG_UCLAMP_TASK_GROUP"
+        ]
+      },
+      "interface": "cgroup",
+      "path_prefix": "/sys/fs/cgroup/cpu.<name>"
+    },
+    {
+      "mechanism": "cftype",
+      "locator": "kernel/sched/cpuacct.c:cpuacct_cgrp_subsys",
+      "filter": {
+        "cftype_array": "files",
+        "cftype_locator": "kernel/sched/cpuacct.c:files",
+        "binding": "legacy_cftypes",
+        "subsys": "cpuacct_cgrp_subsys",
+        "name": [
+          "usage",
+          "usage_user",
+          "usage_sys",
+          "usage_percpu",
+          "usage_percpu_user",
+          "usage_percpu_sys",
+          "usage_all",
+          "stat"
+        ]
+      },
+      "interface": "cgroup",
+      "path_prefix": "/sys/fs/cgroup/cpuacct.<name>"
+    },
+    {
+      "mechanism": "proc_pid_entry",
+      "locator": "fs/proc/base.c:tgid_base_stuff",
+      "filter": {
+        "name": "sched",
+        "ops": "proc_pid_sched_operations",
+        "show": "kernel/sched/debug.c:proc_sched_show_task"
+      },
+      "interface": "proc",
+      "path_prefix": "/proc/<pid>/sched"
+    },
+    {
+      "mechanism": "proc_pid_entry",
+      "locator": "fs/proc/base.c:tgid_base_stuff",
+      "filter": {
+        "name": "schedstat",
+        "ops": "proc_pid_schedstat",
+        "show": "fs/proc/base.c:proc_pid_schedstat"
+      },
+      "interface": "proc",
+      "path_prefix": "/proc/<pid>/schedstat"
+    },
+    {
+      "mechanism": "proc_create_seq",
+      "locator": "kernel/sched/stats.c:proc_schedstat_init",
+      "filter": {
+        "name": "schedstat",
+        "ops": "schedstat_sops"
+      },
+      "interface": "proc",
+      "path_prefix": "/proc/schedstat"
+    },
+    {
+      "mechanism": "proc_pid_entry",
+      "locator": "fs/proc/base.c:tgid_base_stuff",
+      "filter": {
+        "name": "autogroup",
+        "ops": "proc_pid_sched_autogroup_operations",
+        "config": "CONFIG_SCHED_AUTOGROUP"
+      },
+      "interface": "proc",
+      "path_prefix": "/proc/<pid>/autogroup"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/isolation.c:housekeeping_nohz_full_setup",
+      "filter": {
+        "param": "nohz_full"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/isolation.c:housekeeping_isolcpus_setup",
+      "filter": {
+        "param": "isolcpus"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/core.c:setup_preempt_mode",
+      "filter": {
+        "param": "preempt"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/core.c:setup_proxy_exec",
+      "filter": {
+        "param": "sched_proxy_exec"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/core.c:setup_schedstats",
+      "filter": {
+        "param": "schedstats"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/core.c:setup_resched_latency_warn_ms",
+      "filter": {
+        "param": "resched_latency_warn_ms"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/core.c:setup_rt_group_sched",
+      "filter": {
+        "param": "rt_group_sched"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/autogroup.c:setup_autogroup",
+      "filter": {
+        "param": "noautogroup",
+        "config": "CONFIG_SCHED_AUTOGROUP"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/idle.c:cpu_idle_poll_setup",
+      "filter": {
+        "param": "nohlt"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/idle.c:cpu_idle_nopoll_setup",
+      "filter": {
+        "param": "hlt"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/topology.c:setup_relax_domain_level",
+      "filter": {
+        "param": "relax_domain_level"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/psi.c:setup_psi",
+      "filter": {
+        "param": "psi",
+        "config": "CONFIG_PSI"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/sched/fair.c:setup_sched_thermal_decay_shift",
+      "filter": {
+        "param": "sched_thermal_decay_shift"
+      },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    }
+  ]
+}

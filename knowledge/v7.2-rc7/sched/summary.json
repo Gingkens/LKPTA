@@ -1,0 +1,541 @@
+{
+  "module": "sched",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "kernel_name": "sysctl_sched_base_slice",
+      "category": "tunable",
+      "summary": "EEVDF 基础时间片，任务每次被授予的运行时长基准（受 tunable_scaling 缩放）。"
+    },
+    {
+      "kernel_name": "sysctl_sched_migration_cost",
+      "category": "tunable",
+      "summary": "cache-hot 检测阈值，低于该值视为热点任务，负载均衡倾向不迁移。"
+    },
+    {
+      "kernel_name": "sysctl_sched_nr_migrate",
+      "category": "tunable",
+      "summary": "一次负载均衡最多迁移的任务数上限。"
+    },
+    {
+      "kernel_name": "sysctl_resched_latency_warn_ms",
+      "category": "tunable",
+      "summary": "重新调度延迟告警阈值（配合 LATENCY_WARN sched_feat）。"
+    },
+    {
+      "kernel_name": "sched_scaling_fops",
+      "category": "tunable",
+      "summary": "sched 可调参数随 CPU 数的缩放方式（0 不缩放/1 线性/2 对数）。"
+    },
+    {
+      "kernel_name": "sysctl_sched_rt_period",
+      "category": "tunable",
+      "summary": "RT 带宽控制的周期，与 runtime 一起限制 RT 任务 CPU 占用。"
+    },
+    {
+      "kernel_name": "sysctl_sched_rt_runtime",
+      "category": "tunable",
+      "summary": "每个 period 内 RT 任务可运行上限，-1 关闭 RT 节流。v7.2 默认=period 不节流，主要约束 DEADLINE 实体总带宽。"
+    },
+    {
+      "kernel_name": "sysctl_sched_rr_timeslice",
+      "category": "tunable",
+      "summary": "SCHED_RR 任务时间片，写 0 恢复默认。"
+    },
+    {
+      "kernel_name": "sysctl_sched_energy_aware",
+      "category": "tunable",
+      "summary": "EAS 能耗感知调度总开关。"
+    },
+    {
+      "kernel_name": "sysctl_sched_uclamp_util_min",
+      "category": "tunable",
+      "summary": "默认 uclamp.min 利用率下限，1024 表示不加约束。"
+    },
+    {
+      "kernel_name": "sysctl_sched_cfs_bandwidth_slice",
+      "category": "tunable",
+      "summary": "CFS 带宽运行时发放粒度(slice)。"
+    },
+    {
+      "kernel_name": "sysctl_numa_balancing_promote_rate_limit",
+      "category": "tunable",
+      "summary": "NUMA promotion 页迁移每目标节点吞吐上限(MB/s)。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit PLACE_LAG]",
+      "category": "tunable",
+      "summary": "EEVDF 放置策略：唤醒/迁移保留虚拟滞后保持公平。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit SIS_UTIL]",
+      "category": "tunable",
+      "summary": "唤醒选核基于 LLC 利用率减少无谓扫描。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit TTWU_QUEUE]",
+      "category": "tunable",
+      "summary": "远程唤醒排队到目标 CPU 用调度器 IPI 处理，降锁竞争。"
+    },
+    {
+      "kernel_name": "cpu_weight_write_u64",
+      "category": "tunable",
+      "summary": "cgroup CPU 权重(1..10000)，决定组间带宽分配比例。"
+    },
+    {
+      "kernel_name": "cpu_max_write",
+      "category": "tunable",
+      "summary": "cgroup CPU 带宽上限：每 period 内最多运行 quota。"
+    },
+    {
+      "kernel_name": "cpu_burst_write_u64",
+      "category": "tunable",
+      "summary": "cgroup CPU 突发额度，允许短期透支 quota。"
+    },
+    {
+      "kernel_name": "housekeeping_isolcpus_setup",
+      "category": "tunable",
+      "summary": "cmdline：把指定 CPU 从 housekeeping/调度域隔离。"
+    },
+    {
+      "kernel_name": "housekeeping_nohz_full_setup",
+      "category": "tunable",
+      "summary": "cmdline：指定 CPU 跑 full dynticks，去调度 tick 噪声。"
+    },
+    {
+      "kernel_name": "setup_preempt_mode",
+      "category": "tunable",
+      "summary": "cmdline：动态选择抢占模式 none/voluntary/full/lazy。"
+    },
+    {
+      "kernel_name": "setup_relax_domain_level",
+      "category": "tunable",
+      "summary": "cmdline：从某调度域层级起关闭空闲均衡。"
+    },
+    {
+      "kernel_name": "cpu_idle_poll_setup",
+      "category": "tunable",
+      "summary": "cmdline：nohlt，强制空闲忙等，消除唤醒延迟。"
+    },
+    {
+      "kernel_name": "setup_sched_thermal_decay_shift",
+      "category": "tunable",
+      "summary": "cmdline：已废弃选项，被忽略仅打印警告。"
+    },
+    {
+      "kernel_name": "sd->level",
+      "category": "readonly",
+      "summary": "调度域拓扑深度，0=最底层(最小域)，向上递增。"
+    },
+    {
+      "kernel_name": "sd->flags",
+      "category": "readonly",
+      "summary": "调度域的 SD_* 标志位集合。"
+    },
+    {
+      "kernel_name": "cpuusage_write",
+      "category": "tunable",
+      "summary": "cgroup 累计 CPU 时间(ns)，user+system。"
+    },
+    {
+      "kernel_name": "cpuacct_stats_show",
+      "category": "readonly",
+      "summary": "cgroup CPU 时间按 user/system 分类统计(ns)。"
+    },
+    {
+      "kernel_name": "sched_feat_fops",
+      "category": "tunable",
+      "summary": "EEVDF/CFS 调度特性开关集合，写入 NAME 启用、NO_NAME 禁用对应特性（位掩码存于 sysctl_sched_features）。读写通过 sched_feat_fops，show 列出全部开关状态。"
+    },
+    {
+      "kernel_name": "sched_debug_verbose",
+      "category": "tunable",
+      "summary": "调度器调试详细输出开关。开启后会触发 update_sched_domain_debugfs() 创建 /sys/kernel/debug/sched/domains 子树，并在 topology.c 多处打印调度域拓扑信息；关闭会移除 domains 子树。"
+    },
+    {
+      "kernel_name": "sched_dynamic_fops",
+      "category": "tunable",
+      "summary": "动态抢占模式选择器：写 none/voluntary/full/lazy 切换内核抢占模型（运行时改 cond_resched/preempt_schedule 等静态调用或 static_key）。读返回当前模式（用括号标注）。"
+    },
+    {
+      "kernel_name": "sysctl_resched_latency_warn_once",
+      "category": "tunable",
+      "summary": "resched 延迟告警去重开关。与 latency_warn_ms 配合：任务 set_need_resched 后超过 latency_warn_ms 仍未实际调度时打印告警；本开关=1 时每个启动周期只告警一次。"
+    },
+    {
+      "kernel_name": "sysctl_numa_balancing_scan_delay",
+      "category": "tunable",
+      "summary": "NUMA balancing 任务首次扫描前的延迟（ms）。任务启动后隔此延迟才开始 PTE 扫描；同时用于 VMA_PID_RESET_PERIOD（4*scan_delay）重置访问位图。"
+    },
+    {
+      "kernel_name": "sysctl_numa_balancing_scan_period_min",
+      "category": "tunable",
+      "summary": "NUMA PTE 扫描周期的下限（ms）。实际扫描周期 = max(scan_period_min / nr_scan_windows, floor)，floor=1000/(MAX_SCAN_WINDOW/scan_size) 防止大任务过频扫描。"
+    },
+    {
+      "kernel_name": "sysctl_numa_balancing_scan_period_max",
+      "category": "tunable",
+      "summary": "NUMA PTE 扫描周期的上限（ms）。实际扫描周期上限 = scan_period_max / nr_scan_windows（再按 numa_group shared/private 比例放大）。也作为 NUMA 域均衡的 throttle 周期 th_period。"
+    },
+    {
+      "kernel_name": "sysctl_numa_balancing_scan_size",
+      "category": "tunable",
+      "summary": "每次 NUMA 扫描的地址空间大小（MB），定义扫描窗口大小 MB_TO_PAGES(scan_size)。nr_scan_windows = round_up(RSS, scan_size_pages)/scan_size_pages，决定扫描周期分母。"
+    },
+    {
+      "kernel_name": "sysctl_numa_balancing_hot_threshold",
+      "category": "tunable",
+      "summary": "NUMA memory tiering 中页热度阈值（ms）：页 hint fault 延迟 >= 阈值视为 cold（不提升迁移），< 阈值视为 hot 候选提升（promote 到 toptier 节点）。pgdat->nbp_threshold 由其经 numa_promotion_adjust_threshold 调整。"
+    },
+    {
+      "kernel_name": "sd->min_interval",
+      "category": "tunable",
+      "summary": "该调度域负载均衡最小间隔（jiffies）。每次均衡成功后 balance_interval 重置到 min_interval；当所有任务 pinned 或 LBF_ALL_PINNED 时按 2x 增长直到 max_interval。"
+    },
+    {
+      "kernel_name": "sd->max_interval",
+      "category": "tunable",
+      "summary": "该调度域负载均衡最大间隔（jiffies）。balance_interval 增长上限，pinned 情况下封顶 MAX_PINNED_INTERVAL。"
+    },
+    {
+      "kernel_name": "sd->max_newidle_lb_cost",
+      "category": "tunable",
+      "summary": "该域 newidle 负载均衡的历史最大代价（ns）。用于 newidle 均衡决策：若 rq->avg_idle < max_newidle_lb_cost 则跳过该域 newidle 均衡；每 64 次 update 一阶低通衰减（*253/256）。"
+    },
+    {
+      "kernel_name": "sd->busy_factor",
+      "category": "tunable",
+      "summary": "CPU 繁忙时 balance_interval 的乘数。get_sd_balance_interval 在 cpu_busy 时 interval *= busy_factor，使繁忙域均衡间隔更长以减少干扰。"
+    },
+    {
+      "kernel_name": "sd->imbalance_pct",
+      "category": "tunable",
+      "summary": "域负载不均衡判定阈值（百分比）。当 group_util/group_capacity * imbalance_pct 与对端比较时判定是否 overloaded/has_capacity，决定是否触发迁移和迁移量。"
+    },
+    {
+      "kernel_name": "sd->cache_nice_tries",
+      "category": "tunable",
+      "summary": "该域负载均衡时允许 cache-hot 任务被迁出的尝试次数。nr_balance_failed > cache_nice_tries 时即使任务 hot 也允许迁移，否则保留 hot 任务。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit PLACE_DEADLINE_INITIAL]",
+      "category": "tunable",
+      "summary": "EEVDF 新任务初始 deadline 安置：新任务获得半个 slice 的初始 deadline 以平滑加入竞争。关闭则改用其他安置策略。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit PLACE_REL_DEADLINE]",
+      "category": "tunable",
+      "summary": "任务迁移（跨 CPU/域）时是否保留相对虚拟 deadline。开启则迁移后 deadline 相对保留，跨域调度连续性更好。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit RUN_TO_PARITY]",
+      "category": "tunable",
+      "summary": "唤醒抢占抑制：当前任务运行到 vruntime parity（0-lag 点）或耗尽 slice 前，不允许唤醒抢占。配合 PREEMPT_SHORT 使用。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit PREEMPT_SHORT]",
+      "category": "tunable",
+      "summary": "允许 slice 较短的任务在 RUN_TO_PARITY 保护到达前抢占当前任务。给小 slice 高优先级任务更早的运行机会。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit NEXT_BUDDY]",
+      "category": "tunable",
+      "summary": "唤醒失败抢占时，是否把刚唤醒的任务设为下一个 buddy（pick_next 选它）。开启倾向运行刚唤醒任务（cache 局部性）。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit PICK_BUDDY]",
+      "category": "tunable",
+      "summary": "是否允许从 cfs_rq->next 中选 buddy（next 可由 NEXT_BUDDY/yield_to/cgroup dequeue 设置）。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit CACHE_HOT_BUDDY]",
+      "category": "tunable",
+      "summary": "把 buddy 视为 cache-hot，降低其被迁走的概率。提升 cache 局部性。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit DELAY_DEQUEUE]",
+      "category": "tunable",
+      "summary": "延迟出队：非 eligible 任务出队时延迟到被选中或唤醒，留在竞争队列中烧掉负 lag。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit DELAY_ZERO]",
+      "category": "tunable",
+      "summary": "DELAY_DEQUEUE 出队/唤醒时把 lag 裁到 0。配合 DELAY_DEQUEUE 使用。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit PARANOID_AVG]",
+      "category": "tunable",
+      "summary": "启用 avg_vruntime 的偏执模式（更频繁/精确更新）。默认关闭以节省开销。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit WAKEUP_PREEMPTION]",
+      "category": "tunable",
+      "summary": "允许唤醒时抢占当前任务（核心唤醒抢占路径）。关闭则唤醒不直接抢占。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit HRTICK]",
+      "category": "tunable",
+      "summary": "CFS 高精度 tick：用 hrtimer 精确到期切走任务（slice 边界）。依赖 CONFIG_HRTIMER_REARM_DEFERRED。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit HRTICK_DL]",
+      "category": "tunable",
+      "summary": "DEADLINE 类的高精度 tick。依赖 CONFIG_HRTIMER_REARM_DEFERRED。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit NONTASK_CAPACITY]",
+      "category": "tunable",
+      "summary": "估算 CPU capacity 时扣除非任务占用（如 irq time），使 capacity 反映可用算力。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit WARN_DOUBLE_CLOCK]",
+      "category": "tunable",
+      "summary": "同一 rq->lock 段内多次 update_rq_clock 时打 WARN。默认关闭因注解不完整。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit RT_PUSH_IPI]",
+      "category": "tunable",
+      "summary": "RT 任务迁移用 IPI push 模式：低优先级 CPU 群发抢锁时改由源 CPU 主动 push，减少 rq->lock 抢锁风暴。依赖 HAVE_RT_PUSH_IPI。v7.2 起非 PREEMPT_RT 默认关闭。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit RT_RUNTIME_SHARE]",
+      "category": "tunable",
+      "summary": "RT 任务跨 CPU 共享 rt_runtime（借调限额）。默认关闭。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit LB_MIN]",
+      "category": "tunable",
+      "summary": "负载均衡时迁移任务的最小粒度限制（要求迁移负载 >= 单任务最小份额）。默认关闭。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit ATTACH_AGE_LOAD]",
+      "category": "tunable",
+      "summary": "任务 attach 到新 cgroup/rq 时立即老化（age）其负载贡献，避免新 attach 任务瞬时拉满 PELT。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit WA_IDLE]",
+      "category": "tunable",
+      "summary": "wake-affine idle 路径：唤醒选核时倾向选空闲 CPU。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit WA_WEIGHT]",
+      "category": "tunable",
+      "summary": "wake-affine weight 路径：唤醒选核时按 weight 比较源/目标 CPU 负载。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit WA_BIAS]",
+      "category": "tunable",
+      "summary": "wake-affine 偏置：唤醒选核时偏向源 CPU（保留 cache）。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit UTIL_EST]",
+      "category": "tunable",
+      "summary": "启用 utilization estimation（util_est），用历史峰值估计 task util，提升 EAS 选核准确性。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit LATENCY_WARN]",
+      "category": "tunable",
+      "summary": "开启 resched 延迟告警：任务 set_need_resched 后超 latency_warn_ms 仍未调度时打印告警。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit NI_RANDOM]",
+      "category": "tunable",
+      "summary": "newidle 均衡按成功率随机化触发，避免确定性 pattern 引发共振。"
+    },
+    {
+      "kernel_name": "sysctl_sched_features[bit NI_RATE]",
+      "category": "tunable",
+      "summary": "newidle 均衡按历史成功率比例触发（rate-limited）。"
+    },
+    {
+      "kernel_name": "sysctl_schedstats",
+      "category": "tunable",
+      "summary": "调度统计 schedstats 全局开关。开启后 static_branch sched_schedstats 启用，per-rq/per-domain 统计（lb_count/alb_count/ttwu_* 等）开始累加；force_schedstat_enabled() 可能强制开启。"
+    },
+    {
+      "kernel_name": "sysctl_sched_uclamp_util_max",
+      "category": "tunable",
+      "summary": "系统级 uclamp 上限钳位：所有任务 util_max 上界不得超过此值。设为 1024=不限制；降低会压缩高频任务的 util 上界，影响 EAS 选核和提频。"
+    },
+    {
+      "kernel_name": "sysctl_sched_uclamp_util_min_rt_default",
+      "category": "tunable",
+      "summary": "RT 任务 uclamp_min 的默认值。新 fork 的 RT 任务若无显式 uclamp，则 util_min 设为此值（默认 1024=保证 RT 满频运行）。"
+    },
+    {
+      "kernel_name": "sysctl_numa_balancing",
+      "category": "tunable",
+      "summary": "NUMA balancing 总开关与模式位（位掩码）。0=完全关闭，1=正常 NUMA hinting+迁移，2=memory tiering（页提升到 toptier 节点），可组合。开启时 static_branch sched_numa_balancing 启用。"
+    },
+    {
+      "kernel_name": "sysctl_sched_dl_period_max",
+      "category": "tunable",
+      "summary": "SCHED_DEADLINE 任务 period 的最大允许值（us），约 4 秒。__schedcheck_deadline_params 校验 period 不超过此值。"
+    },
+    {
+      "kernel_name": "sysctl_sched_dl_period_min",
+      "category": "tunable",
+      "summary": "SCHED_DEADLINE 任务 period 的最小允许值（us），默认 100us。__schedcheck_deadline_params 校验 period 不低于此值。"
+    },
+    {
+      "kernel_name": "sysctl_sched_autogroup_enabled",
+      "category": "tunable",
+      "summary": "autogroup 全局开关。开启时按 session 进程自动分组，使同组进程共享调度带宽避免互相抢占。CONFIG_SCHED_AUTOGROUP 关闭时 sched_autogroup_sysctl_init 强制设 0。"
+    },
+    {
+      "kernel_name": "cpu_weight_nice_write_s64",
+      "category": "tunable",
+      "summary": "cgroup cpu 控制器的 nice 别名：写 nice 值，按 sched_prio_to_weight 表换算为 weight（shares）。读时反向查表找最接近的 nice。与 cpu.weight 等价但用 nice 表示。"
+    },
+    {
+      "kernel_name": "cpu_idle_write_s64",
+      "category": "tunable",
+      "summary": "cgroup idle 标记：1=该组只在 CPU 空闲时被调度（idle 任务组），0=正常调度。sched_group_set_idle 设置 tg->idle 并影响选核。"
+    },
+    {
+      "kernel_name": "cpu_uclamp_min_write",
+      "category": "tunable",
+      "summary": "cgroup 级 uclamp 下限：所有该组任务的 util_min 不得低于此值（钳位）。写 'max' 或 0..100 百分比；不钳位时显示 max。"
+    },
+    {
+      "kernel_name": "cpu_uclamp_max_write",
+      "category": "tunable",
+      "summary": "cgroup 级 uclamp 上限：所有该组任务的 util_max 不得超过此值。写 'max' 表示不设上限。"
+    },
+    {
+      "kernel_name": "proc_pid_sched_operations",
+      "category": "tunable",
+      "summary": "任务级调度状态显示（vruntime/sum_exec_runtime/nr_switches/schedstat 等）。写任意值触发 proc_sched_set_task：清零该任务的 schedstats 统计（CONFIG_SCHEDSTATS 时）。"
+    },
+    {
+      "kernel_name": "proc_pid_sched_autogroup_operations",
+      "category": "tunable",
+      "summary": "per-task autogroup nice 设置：写 nice 值设置该任务 autogroup 的 shares（按 sched_prio_to_weight 换算）。读显示 /autogroup-N nice M。"
+    },
+    {
+      "kernel_name": "sched_debug_fops",
+      "category": "readonly",
+      "summary": "调度器全局调试快照（0444）。seq 输出 Sched Debug Version、ktime/sched_clk/cpu_clk、sysctl_sched_base_slice/features、然后逐在线 CPU 打印 rq 状态（cfs_rt/rt_rq/load_avg/runnable 等）。"
+    },
+    {
+      "kernel_name": "sd->groups->flags",
+      "category": "readonly",
+      "summary": "该调度域首个调度组的组级 SD_* 标志位集合（sd->groups->flags，按名字列出）。不同于 sd->flags（域级），是组级继承标志。"
+    },
+    {
+      "kernel_name": "sd->groups->asym_prefer_cpu",
+      "category": "readonly",
+      "summary": "该调度组的 asym_prefer_cpu（大小核场景的优先 CPU 编号）。仅在 sd->flags & SD_ASYM_PACKING 时创建。由 sched_update_asym_prefer_cpu 维护。"
+    },
+    {
+      "kernel_name": "sd->name",
+      "category": "readonly",
+      "summary": "该调度域的拓扑层名（如 SMT、CLS、MC、DIE、NUMA）。由 topology.c 中 sd_init 各层设置。"
+    },
+    {
+      "kernel_name": "cpuusage_user_read",
+      "category": "readonly",
+      "summary": "该 cgroup 在所有可能 CPU 上的用户态累计 CPU 时间（ns），CPUACCT_STAT_USER 桶。"
+    },
+    {
+      "kernel_name": "cpuusage_sys_read",
+      "category": "readonly",
+      "summary": "该 cgroup 在所有可能 CPU 上的系统态累计 CPU 时间（ns），CPUACCT_STAT_SYSTEM 桶。"
+    },
+    {
+      "kernel_name": "cpuacct_percpu_seq_show",
+      "category": "readonly",
+      "summary": "该 cgroup 每个 CPU 的总 CPU 时间（ns）序列，CPUACCT_STAT_NSTATS（全量=user+sys）。seq_show 输出每 CPU 一值空格分隔。"
+    },
+    {
+      "kernel_name": "cpuacct_percpu_user_seq_show",
+      "category": "readonly",
+      "summary": "该 cgroup 每个 CPU 的用户态时间（ns）序列。"
+    },
+    {
+      "kernel_name": "cpuacct_percpu_sys_seq_show",
+      "category": "readonly",
+      "summary": "该 cgroup 每个 CPU 的系统态时间（ns）序列。"
+    },
+    {
+      "kernel_name": "cpuacct_all_seq_show",
+      "category": "readonly",
+      "summary": "该 cgroup 全量 CPU 用量表格：表头 cpu user system，逐 CPU 输出 user/system 两列（ns）。"
+    },
+    {
+      "kernel_name": "proc_pid_schedstat",
+      "category": "readonly",
+      "summary": "per-task 调度统计三元组：sum_exec_runtime（总运行 ns）/ run_delay（运行队列等待 ns）/ pcount（运行次数）。sched_info_on() 关闭时输出 '0 0 0'。"
+    },
+    {
+      "kernel_name": "schedstat_sops",
+      "category": "readonly",
+      "summary": "全局调度统计：版本号+时间戳头，然后逐在线 CPU 输出 rq 统计（yld/sched/ttwu/rq_cpu_time/run_delay/pcount）和每个域的 lb_count[CPU_MAX_IDLE_TYPES]、alb_*/sbe_*/sbf_*/ttwu_* 等统计。"
+    },
+    {
+      "kernel_name": "setup_proxy_exec",
+      "category": "tunable",
+      "summary": "cmdline 开关 sched_proxy_exec=：开/关 proxy-exec 调度（CONFIG_SCHED_PROXY_EXEC 编译态静态键 __sched_proxy_exec，默认开）。仅 boot 可设，关掉后任务不再作为 proxy 持有执行权代理其他任务。CONFIG_SCHED_PROXY_EXEC=n 时函数体仅打印警告、无效果。"
+    },
+    {
+      "kernel_name": "setup_schedstats",
+      "category": "tunable",
+      "summary": "cmdline 开关 schedstats=enable/disable：boot 期设置 sched_stats 全局静态键 sched_schedstats（与 sysctl kernel.sched_schedstats 作用同一开关，cmdline 是早期一次性设定）。非法值打印警告且不改状态。"
+    },
+    {
+      "kernel_name": "setup_resched_latency_warn_ms",
+      "category": "tunable",
+      "summary": "cmdline 设 resched_latency_warn_ms=<ms>：直接赋 sysctl_resched_latency_warn_ms（运行期同名 sysctl 可改）。>0 时一个 runnable 任务被延迟调度超过该阈值则打印 resched_latency_warn 一次（每核节流）。0=禁用告警。"
+    },
+    {
+      "kernel_name": "setup_rt_group_sched",
+      "category": "tunable",
+      "summary": "cmdline 开关 rt_group_sched=<0|1>：翻转静态键 rt_group_sched（默认由 CONFIG_RT_GROUP_SCHED 决定）。开=启用 RT cgroup 带宽限额（rt_runtime/rt_period_us，与 cpu 实时带宽 95% 限额机制挂钩）；关=RT 任务不受 cgroup 带宽约束。非法/越界值（非 0/1）打印警告且不改。"
+    },
+    {
+      "kernel_name": "setup_autogroup",
+      "category": "tunable",
+      "summary": "cmdline 开关 noautogroup：出现即把 sysctl_sched_autogroup_enabled 置 0（无条件，不解析参数）。即关闭 autogroup——每个会话不再自动创建独立任务组来提升交互响应。与 sysctl kernel.sched_autogroup_enabled 同一变量，可运行期重开。"
+    },
+    {
+      "kernel_name": "cpu_idle_nopoll_setup",
+      "category": "tunable",
+      "summary": "cmdline 开关 hlt：把 cpu_idle_force_poll 置 0（关闭强制 polling idle）。与 nohlt（置 1）互为反操作。polling idle（nohlt）在 idle 时忙等以极低延迟响应唤醒，但耗电；hlt 恢复用 cpuidle 进入深 C-state 省电、增加唤醒延迟。无参数。"
+    },
+    {
+      "kernel_name": "setup_psi",
+      "category": "tunable",
+      "summary": "cmdline 开关 psi=<bool>：设 psi_enable（运行态是否收集/暴露 PSI 压力指标 /proc/pressure/{cpu,mem,io}）。默认由 CONFIG_PSI_DEFAULT_DISABLED 决定（=n 时默认开）。解析失败保持默认。仅 boot 期生效，运行期不可改（无 sysctl）。"
+    },
+    {
+      "kernel_name": "sched_cache_enable_fops",
+      "category": "tunable",
+      "summary": "cache-aware 调度(LLC 均衡)总开关。写 1 开启 sysctl_sched_cache_user,调度器按 LLC 边界做 cache 亲和聚合"
+    },
+    {
+      "kernel_name": "llc_aggr_tolerance",
+      "category": "tunable",
+      "summary": "LLC 聚合激进度因子。调度器按 LLC 大小 * aggr_tolerance/256 算聚合目标核数;值大→更激进聚合(更多任务挤同 LLC),值小→更分散"
+    },
+    {
+      "kernel_name": "llc_epoch_period",
+      "category": "tunable",
+      "summary": "cache epoch 周期(jiffies,默认 HZ/100=10ms)。每个 epoch 重新评估任务的 cache 亲和性统计;周期短→更敏感、开销大,"
+    },
+    {
+      "kernel_name": "llc_epoch_affinity_timeout",
+      "category": "tunable",
+      "summary": "cache 亲和性过期阈值(epoch 数,默认5≈50ms)。任务离开某 LLC 超过该 epoch 数则丢弃其 cache 亲和记录;值大→亲和保留更久,值"
+    },
+    {
+      "kernel_name": "llc_overaggr_pct",
+      "category": "tunable",
+      "summary": "过度聚合阈值百分比(默认50)。当某 LLC 负载超目标聚合量的 overaggr_pct% 时,判定过度聚合,触发向其他 LLC 迁移;值大→容忍过度聚合,值"
+    },
+    {
+      "kernel_name": "llc_imb_pct",
+      "category": "tunable",
+      "summary": "LLC 不均衡阈值百分比(默认20)。LLC 间负载差超 imb_pct% 才触发 cache-aware 迁移;值大→容忍不均衡(少迁移),值小→更激进均衡。"
+    }
+  ]
+}

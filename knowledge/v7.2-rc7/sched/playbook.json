@@ -1,0 +1,509 @@
+{
+  "module": "sched",
+  "version": "v7.2-rc7",
+  "_doc": "sched 专家的流程层。三种模式由消费者 agent 选择如何使用本文件：intelligent(靠capabilities自由推理) / rule(固定if-then匹配) / hybrid(规则优先、无命中转智能)。query.py 的 --mode 只决定展示哪部分原料，真正用哪种推理是消费者自己的行为——playbook 供弹药不强制走哪条路。所有 lever/observe 引用都用 kernel_name 或 path 锚定现有 tunable/readonly，不复制参数详情(避免冗余+版本漂移)。v7.2 增量：新增 cache-locality(LLC 均衡)capability 反映 CONFIG_SCHED_CACHE；RT 部分按新默认更新(runtime=period 不节流、RT_PUSH_IPI 非 RT 默认关)。",
+  "modes": {
+    "intelligent": {
+      "description": "把 sched 当专家。消费者靠 capabilities + observation_map + thresholds + leverage_map 推理下一步读什么、判什么、动哪个参数。LLM 自主决策，playbook 只提供专家方法论与映射，不写死步骤。",
+      "how_to_use": "消费者拿到 profiling 描述后：(1) 读 capabilities 的 when_applies 判断属哪类问题；(2) 用 observation_map 找该读的 readonly；(3) 读值后用 thresholds 判异常；(4) 用 leverage_map 映射到候选 tunable 族；(5) 取 tunable(用 query.py --name <kernel_name>) 的 increasing/decreasing 决定调向。允许推理跳出 playbook——如 profiling 指向非 sched 问题(内存/IO)时建议转模块。"
+    },
+    "rule": {
+      "description": "固定 if-then 规则驱动。消费者按 rules 逐条匹配 trigger(symptom/keywords)，命中则按 steps 顺序执行 read→judge→recommend。不靠 LLM 推理，可复现、可审计。",
+      "how_to_use": "消费者描述 profiling 后，遍历 rules：trigger 命中即按 steps 执行。无命中则报告'无规则匹配，建议转 intelligent 模式'。规则命中的结论可附 fallback_to_capability 指回 capabilities 做补充。"
+    },
+    "hybrid": {
+      "description": "规则先尝试，命中则用规则结论但附智能推理的补充建议；规则无命中则转 intelligent 模式自由推理。兼顾可复现与覆盖度。",
+      "how_to_use": "先跑 rule 模式；有命中→输出规则结论 + 用 capabilities 补充'规则可能漏的角度'；无命中→转 intelligent 模式。"
+    }
+  },
+  "capabilities": [
+    {
+      "id": "load-imbalance",
+      "name": "负载不均诊断",
+      "when_applies": "profiling 显示某些 CPU 利用率显著高于/低于其他，任务排队不均，或 lb 统计显示均衡成效差。",
+      "reasoning": "先看调度域拓扑(domainN/level/flags)确定均衡发生在哪一层、是否跨 NUMA→读 /proc/schedstat 的 lb_count/lb_failed 看均衡成效。若 lb_failed 高或 lb_imbalance_* 小，可能是 migration_cost 过保守(任务被认作 cache-hot 不愿迁)或 domain 太松。若各 domain lb_count 低，可能均衡没被触发(busy vs newidle 区别)。cpuacct.<name>/usage_percpu 直接看各 CPU 占比找热点。注意 v7.2 若开了 cache-aware 调度(llc_balancing/enabled)，部分迁移决策由 LLC 亲和主导而非传统 LB——lb 统计可能偏低但局部性变好，需结合判断。",
+      "observe": [
+        "sd->level",
+        "sd->flags",
+        "/proc/schedstat lb_count,lb_failed,lb_gained,lb_imbalance_*",
+        "cpuacct_percpu_seq_show"
+      ],
+      "candidate_levers": [
+        "sysctl_sched_migration_cost",
+        "setup_relax_domain_level",
+        "sysctl_sched_features[bit LB_MIN]",
+        "sysctl_sched_features[bit CACHE_HOT_BUDDY]"
+      ]
+    },
+    {
+      "id": "scheduling-latency",
+      "name": "调度延迟诊断",
+      "when_applies": "profiling 显示延迟敏感任务响应慢、被抢占多、wait 长，或 resched_latency_warn 告警。",
+      "reasoning": "读 /proc/<pid>/schedstat 的 wait_sum/wait_max/pcount 看单任务等待占比与频次→读 sched/debug 的 rq nr_running 看该 CPU 是否拥塞→读 base_slice_ns 当前值。若 base_slice 过大导致抢占少(任务占着 CPU 不让)，调小；若唤醒抢占粒度问题，确认 WAKEUP_PREEMPTION feature 已开。考虑 nice/uclamp 提权。RUN_TO_PARITY/PREEMPT_SHORT 决定唤醒抢占是否被 parity 保护抑制。",
+      "observe": [
+        "proc_pid_schedstat",
+        "/sys/kernel/debug/sched/debug rq nr_running",
+        "sysctl_sched_base_slice 当前值",
+        "sysctl_sched_features[bit WAKEUP_PREEMPTION]",
+        "sysctl_sched_features[bit RUN_TO_PARITY]"
+      ],
+      "candidate_levers": [
+        "sysctl_sched_base_slice",
+        "sysctl_sched_features",
+        "sysctl_sched_uclamp_util_min",
+        "sysctl_sched_uclamp_util_max"
+      ]
+    },
+    {
+      "id": "cache-locality",
+      "name": "LLC 局部性诊断（v7.2 新增）",
+      "when_applies": "profiling 显示同进程/同线程组跨 LLC 域分散运行、cache 命中率低(perf LLC miss 高)、或跨 LLC 迁移频繁。CONFIG_SCHED_CACHE 编译开(默认 y)。",
+      "reasoning": "先确认 llc_balancing/enabled 当前值(1=cache-aware 开,读 tunable 路径 /sys/kernel/debug/sched/llc_balancing/enabled 取当前值,非 readonly 项)。若关：开了 traditional LB 后任务可能在 LLC 间漂移、局部性差→试开 enabled=1 看命中率。若已开但局部性仍差：读 aggr_tolerance(默认1,读 tunable 路径 /sys/kernel/debug/sched/llc_balancing/aggr_tolerance)——值太小聚合不足、太大可能挤爆单个 LLC；读 imb_pct/overaggr_pct(读对应 tunable 路径)——imb_pct 过高导致 LLC 间不均衡不触发迁移，overaggr_pct 过高导致热点 LLC 不疏散。epoch_period/epoch_affinity_timeout(读对应 tunable 路径)决定亲和统计时效：epoch_period 过长→对负载变化迟钝，affinity_timeout 过小→回归任务失去亲和。结合 /proc/schedstat 的 lb_count/lb_gained(看传统 LB 与 cache-aware 是否竞争)与 cpuacct/usage_percpu(看 LLC 热点)做诊断；tunable 当前值作为配置态观察补全推理,非 readonly 项。",
+      "observe": [
+        "schedstat_sops",
+        "cpuacct_percpu_seq_show"
+      ],
+      "candidate_levers": [
+        "sched_cache_enable_fops",
+        "llc_aggr_tolerance",
+        "llc_epoch_period",
+        "llc_epoch_affinity_timeout",
+        "llc_overaggr_pct",
+        "llc_imb_pct"
+      ]
+    },
+    {
+      "id": "numa-migration",
+      "name": "NUMA 跨节点诊断",
+      "when_applies": "NUMA 系统、profiling 显示跨节点访问/迁移频繁、局部性差、numa_hit 低 numa_miss 高。",
+      "reasoning": "读 domains flags 含 SD_NUMA 确认跨节点域→/proc/schedstat 的 lb_hot_gained(迁了 cache-hot 任务)/ttwu_move_affine(亲和唤醒迁移)看迁移热度→numa_balancing 的 scan_delay/period/size/hot_threshold 当前值看扫描强度。migration_cost_ns 决定跨节点迁移门槛。跨节点迁移过频→调大 migration_cost 或收窄 numa scan(scan_period_min 调大/scan_size 调小)；过少导致负载不均→反之。",
+      "observe": [
+        "sd->flags",
+        "/proc/schedstat lb_hot_gained,ttwu_move_affine,ttwu_move_balance",
+        "sysctl_numa_balancing 当前值",
+        "sysctl_numa_balancing_scan_period_min 当前值"
+      ],
+      "candidate_levers": [
+        "sysctl_sched_migration_cost",
+        "sysctl_numa_balancing",
+        "sysctl_numa_balancing_scan_period_min",
+        "sysctl_numa_balancing_scan_size"
+      ]
+    },
+    {
+      "id": "rt-starvation",
+      "name": "RT 带宽/饥饿诊断",
+      "when_applies": "RT 任务占比高、非 RT 被饿、或 RT 自身被限流 throttle(cpu.stat 的 throttled_usec 高)。注意 v7.2 默认 runtime=period 不节流，throttle 频繁可能源于 fair_server/ext_server 而非 sysctl_sched_rt_runtime。",
+      "reasoning": "v7.2 语义变化：sysctl_sched_rt_runtime 默认 1000000(=period)，FIFO/RR 节流改由 fair_server/ext_server 承担，本参数主要约束 DEADLINE 实体总带宽。先读 sched_rt_runtime/period 当前值看配额：若 runtime==period→默认态(不节流)，RT 突发会占满 CPU；若系统需给非 RT 留底，应手动调回 950000 或更低。若 RT throttle 频繁：确认是否 fair_server runtime 被调小(fair_server/cpuN/runtime)，或 rt_group_sched(boot-only)开了导致 cgroup 级限额。RT_PUSH_IPI 在非 PREEMPT_RT 默认关：多 CPU 抢 rq->lock 风暴时可手动开。",
+      "observe": [
+        "sysctl_sched_rt_runtime 当前值",
+        "sysctl_sched_rt_period 当前值",
+        "sysctl_sched_features[bit RT_PUSH_IPI] 当前态",
+        "cpu.stat throttled_usec(若有)",
+        "fair_server/cpuN/runtime 当前值(若可见)"
+      ],
+      "candidate_levers": [
+        "sysctl_sched_rt_runtime",
+        "sysctl_sched_rt_period",
+        "setup_rt_group_sched",
+        "sysctl_sched_features[bit RT_PUSH_IPI]",
+        "sysctl_sched_features[bit RT_RUNTIME_SHARE]"
+      ]
+    },
+    {
+      "id": "cgroup-cpu-share",
+      "name": "cgroup CPU 份额诊断",
+      "when_applies": "多 cgroup 抢 CPU、某 cgroup 响应差或抢占过多。",
+      "reasoning": "读 cpuacct.<name>/stat 与 usage_percpu 看 cgroup 占 CPU 比例与热点 CPU→cpu.weight 决定份额(soft)、cpu.max 决定上限(hard)。份额不够提 weight；要硬限保底用 max；要让某 cgroup 任务拿到更高 util 起步用 uclamp.min。",
+      "observe": [
+        "cpuacct_stats_show",
+        "cpuacct_percpu_seq_show",
+        "cpu_weight_write_u64 当前值",
+        "cpu_max_write 当前值"
+      ],
+      "candidate_levers": [
+        "cpu_weight_write_u64",
+        "cpu_max_write",
+        "cpu_uclamp_min_write",
+        "cpu_uclamp_max_write"
+      ]
+    }
+  ],
+  "observation_map": {
+    "_doc": "症状信号 → 该读的 readonly(path/kernel_name/字段)。让消费者知道'看到 X 该查 Y'。智能模式当推理依据，规则模式当 read 目标。每条结构：path=readonly 路径(占位符保留), fields=该路径里要读的字段, read=对应 readonly 的 kernel_name, meaning=该信号揭示什么。tunable 的'当前值'不在此(非 readonly),配置态观察见 capabilities.reasoning。",
+    "high_cpu_some_idle_other": {
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/level|/sys/kernel/debug/sched/domains/cpuN/domainN/flags|/proc/schedstat|/sys/fs/cgroup/cpuacct.<name>/usage_percpu",
+      "fields": [
+        "level",
+        "flags",
+        "lb_count",
+        "lb_failed",
+        "lb_gained",
+        "lb_imbalance_*",
+        "per-cpu usage"
+      ],
+      "read": "sd->level|sd->flags|schedstat_sops|cpuacct_percpu_seq_show",
+      "meaning": "域层级+flags 揭示均衡发生在哪一层/是否跨 NUMA；lb_failed/lb_count 揭示均衡成效；per-cpu usage 揭示热点 CPU。指向 load-imbalance。"
+    },
+    "task_wait_long": {
+      "path": "/proc/<pid>/schedstat|/sys/kernel/debug/sched/debug",
+      "fields": [
+        "wait_sum",
+        "wait_max",
+        "run_sum",
+        "pcount",
+        "rq nr_running"
+      ],
+      "read": "proc_pid_schedstat|sched_debug_fops",
+      "meaning": "wait_sum/wait_max 大=pcount 频繁→任务在等不到 CPU(调度延迟瓶颈,非 CPU 不足)；rq nr_running 高=该 CPU 拥塞。指向 scheduling-latency。base_slice 当前值需读 tunable 路径,非 readonly。"
+    },
+    "numa_remote_access_high": {
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/flags|/proc/schedstat",
+      "fields": [
+        "flags[SD_NUMA]",
+        "lb_hot_gained",
+        "ttwu_move_affine",
+        "ttwu_move_balance"
+      ],
+      "read": "sd->flags|schedstat_sops",
+      "meaning": "flags 含 SD_NUMA=跨节点域；lb_hot_gained 高=在迁 cache-hot 任务(违背局部性)；ttwu_move_affine 高=亲和唤醒迁移多。指向 numa-migration。numa_balancing scan_* 当前值需读 tunable 路径,非 readonly。"
+    },
+    "rt_throttled": {
+      "path": "/sys/fs/cgroup/cpu.stat",
+      "fields": [
+        "throttled_usec"
+      ],
+      "read": "cpu.stat(cgroup v2 cpu 控制器,跨模块)",
+      "meaning": "throttled_usec 高=RT 被限流。指向 rt-starvation。sysctl_sched_rt_runtime/rt_period 与 RT_PUSH_IPI 是 tunable,当前值需读 tunable 路径,非 readonly。"
+    },
+    "cgroup_under_served": {
+      "path": "/sys/fs/cgroup/cpuacct.<name>/stat|/sys/fs/cgroup/cpuacct.<name>/usage_percpu",
+      "fields": [
+        "user",
+        "system",
+        "per-cpu usage"
+      ],
+      "read": "cpuacct_stats_show|cpuacct_percpu_seq_show",
+      "meaning": "user/system 比例 + per-cpu usage 揭示 cgroup 占 CPU 比例与热点 CPU。指向 cgroup-cpu-share。cpu.weight/cpu.max 当前值需读 tunable 路径,非 readonly。"
+    },
+    "llc_locality_poor": {
+      "path": "/proc/schedstat|/sys/fs/cgroup/cpuacct.<name>/usage_percpu",
+      "fields": [
+        "lb_count",
+        "lb_gained",
+        "per-cpu usage"
+      ],
+      "read": "schedstat_sops|cpuacct_percpu_seq_show",
+      "meaning": "lb_count(传统 LB 与 cache-aware 是否竞争)+ per-cpu usage 按 LLC 分组聚合看 llc_spread 揭示 LLC 间热点。指向 cache-locality。llc_balancing/* 当前值是 tunable,非 readonly,见 capabilities.reasoning。"
+    }
+  },
+  "thresholds": {
+    "_doc": "判据规则：readonly 值落在什么范围算异常。给智能模式当推理依据，给规则模式当 judge 条件。阈值是经验值不是源码硬约束，现场可调，别当铁律。",
+    "lb_failed_ratio": {
+      "desc": "sum(lb_failed) / sum(lb_count) per domain per idle_type",
+      "warn_if_gt": 0.25,
+      "meaning": "负载均衡失败率超 25% → 迁移阻力大(migration_cost 过保守或 domain 太松)"
+    },
+    "cpu_spread": {
+      "desc": "(max(per-cpu usage) - min(per-cpu usage)) / max",
+      "warn_if_gt": 0.3,
+      "meaning": "CPU 利用率极差超 30% → 负载不均"
+    },
+    "task_wait_ratio": {
+      "desc": "wait_sum / (wait_sum + run_sum)",
+      "warn_if_gt": 0.5,
+      "meaning": "任务等待占比过半 → 调度延迟瓶颈而非 CPU 不足"
+    },
+    "rt_throttle_ratio": {
+      "desc": "throttled_usec / period_usec",
+      "warn_if_gt": 0.05,
+      "meaning": "RT 被 throttle 超 5% → 配额不足或 fair_server/ext_server 限额过紧(v7.2 默认 runtime=period 不节流，频繁 throttle 多半来自 server 级而非 sysctl_sched_rt_runtime)"
+    },
+    "llc_spread": {
+      "desc": "跨 LLC 的 per-LLC CPU 利用率极差(需从 cpuacct/usage_percpu 按 LLC 分组聚合)",
+      "warn_if_gt": 0.3,
+      "meaning": "LLC 间负载差超 30% → cache-aware 均衡不足或 imb_pct/overaggr_pct 阈值过松(v7.2 新增)"
+    }
+  },
+  "leverage_map": {
+    "_doc": "症状类别 → 候选 tunable 族(kernel_name 引用，不复制参数详情)。消费者拿 kernel_name 去 query.py --name 取 increasing/decreasing 决定调向。",
+    "load-imbalance": [
+      "sysctl_sched_migration_cost",
+      "setup_relax_domain_level",
+      "sysctl_sched_features[bit LB_MIN]",
+      "sysctl_sched_features[bit CACHE_HOT_BUDDY]"
+    ],
+    "scheduling-latency": [
+      "sysctl_sched_base_slice",
+      "sysctl_sched_features[bit WAKEUP_PREEMPTION]",
+      "sysctl_sched_features[bit RUN_TO_PARITY]",
+      "sysctl_sched_features[bit PREEMPT_SHORT]",
+      "sysctl_sched_uclamp_util_min",
+      "sysctl_sched_uclamp_util_max"
+    ],
+    "cache-locality": [
+      "sched_cache_enable_fops",
+      "llc_aggr_tolerance",
+      "llc_epoch_period",
+      "llc_epoch_affinity_timeout",
+      "llc_overaggr_pct",
+      "llc_imb_pct"
+    ],
+    "numa-migration": [
+      "sysctl_numa_balancing",
+      "sysctl_numa_balancing_scan_period_min",
+      "sysctl_numa_balancing_scan_size",
+      "sysctl_sched_migration_cost"
+    ],
+    "rt-starvation": [
+      "sysctl_sched_rt_runtime",
+      "sysctl_sched_rt_period",
+      "setup_rt_group_sched",
+      "sysctl_sched_features[bit RT_PUSH_IPI]",
+      "sysctl_sched_features[bit RT_RUNTIME_SHARE]"
+    ],
+    "cgroup-cpu-share": [
+      "cpu_weight_write_u64",
+      "cpu_max_write",
+      "cpu_uclamp_min_write",
+      "cpu_uclamp_max_write"
+    ]
+  },
+  "interactions": {
+    "_doc": "参数间依赖/互斥/顺序——消费者调 A 时联动 B。boot_only 列的是运行时不可改的(改需 reboot)。mutex 是互斥语义。",
+    "pairs": [
+      {
+        "relation": "配对：quota/period 比例才有意义，单独调一个无意义。v7.2 默认 1000000/1000000(不节流)；需留底给非 RT 时调 runtime<period（如 950000=95%）。",
+        "params": [
+          "sysctl_sched_rt_runtime",
+          "sysctl_sched_rt_period"
+        ]
+      },
+      {
+        "relation": "都影响延迟/吞吐权衡：base_slice 决定时间片，WAKEUP_PREEMPTION 决定唤醒能否抢。同向调可能矛盾。",
+        "params": [
+          "sysctl_sched_base_slice",
+          "sysctl_sched_features[bit WAKEUP_PREEMPTION]"
+        ]
+      },
+      {
+        "relation": "都控制迁移激进度：migration_cost 是 cache 门槛，scan_period 是 NUMA 扫描频率。同场景下同向调。",
+        "params": [
+          "sysctl_sched_migration_cost",
+          "sysctl_numa_balancing_scan_period_min"
+        ]
+      },
+      {
+        "relation": "v7.2 新增交互：cache-aware 均衡与 migration_cost 都影响迁移决策。两者同向过度调可能叠加迁移量或互相抵消——调 cache-aware 时留意 migration_cost 当前值。",
+        "params": [
+          "sched_cache_enable_fops",
+          "sysctl_sched_migration_cost"
+        ]
+      },
+      {
+        "relation": "v7.2：aggr_tolerance 决定聚合目标核数，overaggr_pct 决定何时判定过度聚合触发疏散。tolerance 大+overaggr 小→LLC 拥堵风险；tolerance 小+overaggr 大→疏散太频。",
+        "params": [
+          "llc_aggr_tolerance",
+          "llc_overaggr_pct"
+        ]
+      },
+      {
+        "relation": "v7.2：RT_PUSH_IPI 默认仅 PREEMPT_RT 开(非 RT 关)，rt_runtime 默认=period 不节流。多 CPU 抢 rq->lock 风暴时开 RT_PUSH_IPI；RT 频繁 throttle 时调 runtime。",
+        "params": [
+          "sysctl_sched_features[bit RT_PUSH_IPI]",
+          "sysctl_sched_rt_runtime"
+        ]
+      },
+      {
+        "relation": "互斥语义：isolcpus 已隔离的 CPU 不应再被 cgroup cpuset 分配。cpuset 非 sched 模块参数，此处为跨模块语义提示。",
+        "params": [
+          "housekeeping_isolcpus_setup",
+          "cpuset(cgroup 子系统)"
+        ]
+      }
+    ],
+    "boot_only": [
+      "setup_rt_group_sched",
+      "setup_proxy_exec",
+      "setup_autogroup",
+      "setup_psi",
+      "housekeeping_nohz_full_setup",
+      "housekeeping_isolcpus_setup",
+      "setup_resched_latency_warn_ms"
+    ],
+    "mutex": [
+      "sched_ext(若启用) vs 传统 sched 调参：开了 sched_ext(BPF 调度器)后大多数传统 sched 调参失效或语义改变，先确认未开 sched_ext。"
+    ]
+  },
+  "rules": [
+    {
+      "id": "R1-numa-migrate-excess",
+      "trigger": {
+        "symptom": "跨 NUMA 节点迁移频繁、局部性差",
+        "keywords": [
+          "numa",
+          "remote",
+          "跨节点",
+          "migration",
+          "局部性",
+          "numa_miss"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/schedstat",
+          "field": "lb_hot_gained per domain",
+          "note": "hot-gained 高说明在迁 cache-hot 任务(违背局部性)"
+        },
+        {
+          "read": "domains/cpuN/domainN/flags",
+          "judge": "含 SD_NUMA → 确认是跨节点域"
+        },
+        {
+          "judge": "lb_failed_ratio > 0.25 → 迁移阻力大，矛盾点在 migration_cost 过保守"
+        },
+        {
+          "recommend": "调大 sysctl_sched_migration_cost(增加迁移门槛) 或收窄 sysctl_numa_balancing_scan_period_min/sysctl_numa_balancing_scan_size(降低 NUMA 扫描频率)"
+        },
+        {
+          "verify": "调后重读 /proc/schedstat 的 lb_hot_gained 应下降"
+        }
+      ],
+      "fallback_to_capability": "numa-migration"
+    },
+    {
+      "id": "R2-load-spread-poor",
+      "trigger": {
+        "symptom": "负载不均、某些 CPU 打满其他空闲",
+        "keywords": [
+          "load",
+          "imbalance",
+          "不平衡",
+          "打满",
+          "idle",
+          "utilization"
+        ]
+      },
+      "steps": [
+        {
+          "read": "cpuacct.<name>/usage_percpu",
+          "judge": "cpu_spread > 0.30 → 不均衡"
+        },
+        {
+          "read": "/proc/schedstat lb_count",
+          "judge": "lb_count 偏低 → 均衡没被触发(busy 平衡弱)；lb_failed_ratio 高 → 均衡尝试了但失败"
+        },
+        {
+          "recommend": "调小 sysctl_sched_migration_cost(降低迁移门槛，更易均衡) 或 setup_relax_domain_level(放宽均衡层级)"
+        },
+        {
+          "verify": "调后重读 usage_percpu 的 cpu_spread 应下降"
+        }
+      ],
+      "fallback_to_capability": "load-imbalance"
+    },
+    {
+      "id": "R3-task-latency",
+      "trigger": {
+        "symptom": "延迟敏感任务响应慢、wait 长",
+        "keywords": [
+          "latency",
+          "延迟",
+          "响应",
+          "wait",
+          "抢占",
+          "resched"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/<pid>/schedstat",
+          "field": "wait_sum,wait_max,run_sum,pcount",
+          "note": "定位目标任务 PID"
+        },
+        {
+          "judge": "task_wait_ratio > 0.50 → 调度延迟瓶颈(任务在等，不是 CPU 不足)"
+        },
+        {
+          "read": "sysctl_sched_base_slice 当前值",
+          "judge": "若偏大 → 任务占着 CPU 不让，新来任务等不到"
+        },
+        {
+          "recommend": "调小 sysctl_sched_base_slice(更频繁抢占) 或确认 sysctl_sched_features 的 WAKEUP_PREEMPTION 已开"
+        },
+        {
+          "verify": "调后重读目标 task 的 task_wait_ratio 应下降"
+        }
+      ],
+      "fallback_to_capability": "scheduling-latency"
+    },
+    {
+      "id": "R4-rt-throttled",
+      "trigger": {
+        "symptom": "RT 任务被限流、throttle 频繁",
+        "keywords": [
+          "rt",
+          "throttle",
+          "限流",
+          "realtime",
+          "throttled"
+        ]
+      },
+      "steps": [
+        {
+          "read": "sysctl_sched_rt_runtime,sysctl_sched_rt_period 当前值",
+          "note": "v7.2 默认 runtime=period(不节流)；若用户已调回 <period，throttle 来自本参数"
+        },
+        {
+          "judge": "rt_throttle_ratio > 0.05 → 配额不足（若 runtime==period 仍 throttle，来源是 fair_server/ext_server 而非本 sysctl）"
+        },
+        {
+          "recommend": "若 runtime<period：调大 sysctl_sched_rt_runtime(接近但不超 period)。若 runtime==period 仍 throttle：查 fair_server/cpuN/runtime 与 rt_group_sched(boot-only)，本 sysctl 非根因"
+        },
+        {
+          "verify": "调后 cpu.stat 的 throttled_usec 应下降"
+        }
+      ],
+      "fallback_to_capability": "rt-starvation"
+    },
+    {
+      "id": "R5-llc-locality-poor",
+      "trigger": {
+        "symptom": "LLC 局部性差、cache miss 高、同进程任务跨 LLC 分散",
+        "keywords": [
+          "llc",
+          "cache",
+          "miss",
+          "局部性",
+          "cache-aware",
+          "llc_balancing",
+          "aggr"
+        ]
+      },
+      "steps": [
+        {
+          "read": "zcat /proc/config.gz | grep CONFIG_SCHED_CACHE (或 /boot/config-$(uname -r))",
+          "judge": "未开(=n 或缺) → SCHED_CACHE 特性不存在,llc_balancing/ 路径无,本规则不适用,转传统 LB 调参"
+        },
+        {
+          "read": "/sys/kernel/debug/sched/llc_balancing/enabled",
+          "judge": "=0 → cache-aware 关，传统 LB 可能导致跨 LLC 漂移"
+        },
+        {
+          "read": "llc_aggr_tolerance,llc_imb_pct,llc_overaggr_pct 当前值",
+          "note": "默认 aggr=1/imb=20/overaggr=50"
+        },
+        {
+          "judge": "llc_spread > 0.30 → LLC 间不均衡（若 enabled=1 仍不均，imb_pct/overaggr_pct 可能过松）"
+        },
+        {
+          "recommend": "若 enabled=0：开 sched_cache_enable_fops=1。若 enabled=1 仍局部性差：调大 llc_aggr_tolerance(更激进聚合) 或调小 llc_imb_pct(更激进均衡)；若热点 LLC 拥堵则调小 llc_overaggr_pct(更早疏散)"
+        },
+        {
+          "verify": "调后重读 cpuacct/usage_percpu 按 LLC 分组的 llc_spread 应下降；perf LLC miss-rate 应降"
+        }
+      ],
+      "fallback_to_capability": "cache-locality"
+    }
+  ]
+}

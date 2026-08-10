@@ -1,0 +1,59 @@
+{
+  "module": "irq",
+  "version": "v7.2-rc7",
+  "sources": [
+    {
+      "mechanism": "proc_create_data",
+      "locator": "kernel/irq/proc.c:register_irq_proc",
+      "filter": {
+        "child_dir_template": "irq/<irqN>",
+        "name": ["smp_affinity", "smp_affinity_list", "affinity_hint", "node", "effective_affinity", "effective_affinity_list", "spurious"]
+      },
+      "interface": "proc",
+      "path_prefix": "/proc"
+    },
+    {
+      "mechanism": "proc_create_data",
+      "locator": "kernel/irq/proc.c:register_default_affinity_proc",
+      "filter": { "name": ["irq/default_smp_affinity"] },
+      "interface": "proc",
+      "path_prefix": "/proc"
+    },
+
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/irq/spurious.c:noirqdebug_setup",
+      "filter": { "param": "noirqdebug" },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/irq/spurious.c:irqfixup_setup",
+      "filter": { "param": "irqfixup" },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/irq/spurious.c:irqpoll_setup",
+      "filter": { "param": "irqpoll" },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/irq/irqdesc.c:irq_affinity_setup",
+      "filter": { "param": "irqaffinity" },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "kernel/irq/handle.c:irqhandler_duration_check_setup",
+      "filter": { "param": "irqhandler.duration_warn_us" },
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline"
+    }
+  ]
+}

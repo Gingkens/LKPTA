@@ -1,0 +1,51 @@
+{
+  "module": "io",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "kernel_name": "blkcg_print_stat",
+      "category": "readonly",
+      "summary": "io cgroup 根/子组 per-device IO 统计：每设备一行 rbytes/wbytes/dbytes/rios/wios/dios，及可选 use_delay/delay_nsec。"
+    },
+    {
+      "kernel_name": "ioc_weight_write",
+      "category": "tunable",
+      "summary": "iocost 控制器 cgroup IO 权重（1..10000），决定该组在设备内分得的 IO 时间/带宽份额。"
+    },
+    {
+      "kernel_name": "ioc_qos_write",
+      "category": "tunable",
+      "summary": "iocost per-device QoS 参数（rlat/wlat 延迟目标、rpct/wpct 比例、min/max vrate clamp），用于控制延迟与 vrate 范围。"
+    },
+    {
+      "kernel_name": "ioc_cost_model_write",
+      "category": "tunable",
+      "summary": "iocost per-device 线性成本模型系数（rbps/wbps/rseqiops/... ），把设备吞吐/IOPS 折算为 vtime 成本。"
+    },
+    {
+      "kernel_name": "ioprio_set_prio_policy",
+      "category": "tunable",
+      "summary": "blk-ioprio 控制器：对该 cgroup 的 bio 指定 IO 优先级策略（no-change/promote-to-rt/restrict-to-be/idle/none-to-rt）。"
+    },
+    {
+      "kernel_name": "diskstats_op",
+      "category": "readonly",
+      "summary": "/proc/diskstats：per-块设备/分区的 IO 计数（rios/wios/dios/flush、merges、sectors、io_ticks、inflight 等统计）。"
+    },
+    {
+      "kernel_name": "partitions_op",
+      "category": "readonly",
+      "summary": "/proc/partitions：列出块设备及分区的 major/minor/#blocks(sectors/2)/name，纯分区视图无 IO 计数。"
+    },
+    {
+      "kernel_name": "elevator_setup",
+      "category": "tunable",
+      "summary": "已废弃的 boot cmdline 参数 elevator=：原用于全局指定默认 IO 调度器，v7.2 仅 pr_warn 不再生效，须用 sysfs per-device 设。"
+    },
+    {
+      "kernel_name": "setup_bdev_allow_write_mounted",
+      "category": "tunable",
+      "summary": "boot cmdline 开关 bdev_allow_write_mounted=：是否允许对已挂载的块设备进行写打开（默认=CONFIG_BLK_DEV_WRITE_MOUNTED，默认 y）。"
+    }
+  ]
+}

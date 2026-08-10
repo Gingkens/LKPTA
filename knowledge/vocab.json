@@ -1,0 +1,362 @@
+{
+  "module": "vocab",
+  "description": "跨模块共享的内核调度/调优领域词汇表。消费者在阅读 knowledge 的 summary/tuning/use 等字段遇到不懂的术语时查这里。schema 字段名（category/path/gate 等）不在此表——它们的定义见 CONSUMER.md §3 字段表。生产者生产 knowledge 时遇到新术语请在此追加。",
+  "version": "v7.1.0-rc5",
+  "terms": [
+    {
+      "term": "EEVDF",
+      "definition": "Earliest Eligible Virtual Deadline First，6.6+ 起 CFS 采用的时间切片调度算法，任务按虚拟 deadline 排队，先到期的先运行。",
+      "consumer_need_to_know": "理解 base_slice、PLACE_LAG 等 CFS 调参对象是 EEVDF 语义，不是老 CFS 的粒度。调 slice 大小直接影响每个任务的运行时长与抢占频率。"
+    },
+    {
+      "term": "vlag / lag / vruntime",
+      "definition": "任务的虚拟运行时间（vruntime）相对调度公平点的偏差量（lag）。EEVDF 用它决定任务在就绪队列中的排队位置。",
+      "consumer_need_to_know": "PLACE_LAG 调的是唤醒时是否保留该任务的 lag。保留则任务能'补回'之前被抢占欠下的运行时间，反之从零开始。"
+    },
+    {
+      "term": "cache-hot / cache-cold",
+      "definition": "任务数据是否还在 CPU cache 里（刚运行过、数据还在）称为 cache-hot，否则 cache-cold。",
+      "consumer_need_to_know": "migration_cost_ns 就是'任务多久内算 cache-hot'的时间阈值。migrate 一个 cache-hot 任务会丢 cache 局部性，migrate 一个 cache-cold 任务则无此代价。"
+    },
+    {
+      "term": "sched domain / sd->level",
+      "definition": "CPU 按拓扑层级组织的调度域（SMT/CLS/MC/DIE → NUMA）。每个域是一个负载均衡作用域。sd->level 是域深度。",
+      "consumer_need_to_know": "level 从 CPU 向上递增，0=最底层最小域，越往上越接近 NUMA 根域。读 domains/.../level 和 flags 判断目标域的层级与类型，是负载均衡类调参的诊断依据。"
+    },
+    {
+      "term": "SD_* flags",
+      "definition": "调度域的行为标志位（定义于 include/linux/sched/topology.h），如 SD_NUMA、SD_ASYM_PACKING、SD_BALANCE_*，描述该域做哪些均衡/迁移策略。",
+      "consumer_need_to_know": "读 domains/.../flags 判断域类型：含 SD_NUMA 是跨 NUMA 节点域，含 SD_ASYM_PACKING 是大小核。据此理解跨域迁移的触发条件。"
+    },
+    {
+      "term": "uclamp",
+      "definition": "Utilization Clamping，把任务的利用率钳制到 [util_min, util_max] 区间，满刻度为 SCHED_CAPACITY_SCALE=1024。",
+      "consumer_need_to_know": "sched_util_clamp_min 默认 1024=不设下限。设下限可保证某任务获得最低的 CPU 频率/算力。与 EAS 配合决定选核和提频。"
+    },
+    {
+      "term": "EAS / EM",
+      "definition": "Energy-Aware Scheduling，按能耗模型（Energy Model）在大小核/同构核间选择'能效最优'的 CPU。",
+      "consumer_need_to_know": "sched_energy_aware=0 关闭 EAS。EAS 依赖 CONFIG_ENERGY_MODEL，目标系统需确认编译了才生效。"
+    },
+    {
+      "term": "RUNTIME_INF",
+      "definition": "~0ULL，表示'无限/不节流'的哨兵值。",
+      "consumer_need_to_know": "sched_rt_runtime_us=-1 即写 RUNTIME_INF，表示 RT 任务不限运行时间。这是 RT 调参里常见的特殊值。"
+    },
+    {
+      "term": "full dynticks / housekeeping",
+      "definition": "nohz_full CPU 不收周期性时钟中断，代价是内核服务（如 RCU、时间）需由 housekeeping CPU 承担。",
+      "consumer_need_to_know": "isolcpus/nohz_full 隔离语义：被隔离的 CPU 尽量只跑目标负载，减少中断扰动。但 housekeeping CPU 负担会加重。"
+    },
+    {
+      "term": "CFS bandwidth / throttle / quota",
+      "definition": "CFS 组带宽限制：每个周期（period）内一个 cgroup 最多运行 quota 时间，超出则节流（throttle）停跑。",
+      "consumer_need_to_know": "cgroup cpu.max 即 quota/period 格式。调 quota 限制或保障某组的 CPU 使用上限。"
+    },
+    {
+      "term": "burst",
+      "definition": "CFS 带宽在 quota 之外允许透支的时间，之后要偿还。",
+      "consumer_need_to_know": "cgroup cpu.max.burst 允许短时超过 quota，适合突发型负载。"
+    },
+    {
+      "term": "TTWU",
+      "definition": "try_to_wake_up，唤醒睡眠任务的路径；跨 CPU 唤醒称为远程唤醒。",
+      "consumer_need_to_know": "TTWU_QUEUE 调的是远程唤醒是否排队。影响唤醒延迟与跨核通信开销的取舍。"
+    },
+    {
+      "term": "SIS / LLC",
+      "definition": "select_idle_sibling（选空闲兄弟核）与 Last-Level Cache（最后一级 cache 域）。唤醒选核时会扫描 LLC 内/跨 LLC 的空闲 CPU。",
+      "consumer_need_to_know": "SIS_UTIL 调唤醒选核的利用率门槛。选核策略直接影响 cache 局部性与负载分散。"
+    },
+    {
+      "term": "nice / load weight / shares",
+      "definition": "nice 值映射为 load weight（调度权重），cgroup 的 weight 决定该组相对份额。",
+      "consumer_need_to_know": "cgroup cpu.weight 与 nice 换算：weight 越大份额越多。调 weight 控制 cgroup 间的 CPU 分配比例。"
+    },
+    {
+      "term": "PELT",
+      "definition": "Per-Entity Load Tracking，基于半衰期指数衰减的负载跟踪，估计算法负载和利用率。",
+      "consumer_need_to_know": "util_est/load 相关参数基于 PELT 计算。理解负载估计的滞后性，调参时知道改动要过几个周期才见效。"
+    },
+    {
+      "term": "DL server",
+      "definition": "SCHED_DEADLINE server 机制（fair_server/ext_server），把 deadline 带宽按 server 形式供给 CFS/RT/ext 类。",
+      "consumer_need_to_know": "debugfs 的 fair_server/cpuN/runtime、period 是这些 server 的参数。调它们控制某 CPU 上非 deadline 任务能获得的带宽上限。"
+    },
+    {
+      "term": "autogroup",
+      "definition": "按进程组自动分组，使同一组内进程共享调度带宽，避免相互抢占。",
+      "consumer_need_to_know": "sched_autogroup_enabled 开关；/proc/<pid>/autogroup 可见/调每进程组权重。跑多个相互独立的批任务时影响显著。"
+    },
+    {
+      "term": "sched_feat / SCHED_FEAT",
+      "definition": "EEVDF/CFS 调度器内部的特性开关位（features.h 中 SCHED_FEAT(NAME, default) 宏定义），位掩码存于 sysctl_sched_features，通过 jump_label 控制 fast path。",
+      "consumer_need_to_know": "/sys/kernel/debug/sched/features 写 NAME 启用、NO_NAME 禁用。features/ 子目录里每个 NAME 是独立可调开关，不是单一参数。"
+    },
+    {
+      "term": "preempt dynamic / preempt modes",
+      "definition": "运行时切换内核抢占模型（none/voluntary/full/lazy）的机制，依赖 CONFIG_PREEMPT_DYNAMIC。通过 static_call 或 static_key 替换 cond_resched/preempt_schedule 等路径。",
+      "consumer_need_to_know": "/sys/kernel/debug/sched/preempt 是运行时切换入口（区别于 cmdline preempt=）；lazy 模式需 CONFIG_ARCH_HAS_PREEMPT_LAZY。"
+    },
+    {
+      "term": "asym packing / SD_ASYM_PACKING",
+      "definition": "非对称 CPU packing 策略：在大小核/异构算力系统中，倾向把任务放到优先级更高的 CPU（asym_prefer_cpu）。SD_ASYM_PACKING 域标志启用。",
+      "consumer_need_to_know": "读 group_asym_prefer_cpu 看该组倾向的目标 CPU；调这类域的 cache_nice_tries/imbalance_pct 时要考虑 packing 语义。"
+    },
+    {
+      "term": "NUMA balancing / memory tiering",
+      "definition": "NUMA 自动均衡：周期性 PTE 扫描触发 hint fault，按访问热度在节点间迁移页/任务。memory tiering 子模式把热页提升到 toptier 节点。",
+      "consumer_need_to_know": "/proc/sys/kernel/numa_balancing 是位掩码（0=关，1=normal，2=tiering，3=normal|tiering）；debugfs sched/numa_balancing/* 调扫描频率与热度阈值。"
+    },
+    {
+      "term": "DL period / deadline params",
+      "definition": "SCHED_DEADLINE 任务用 runtime/deadline/period 三元组描述：每 period 内保证 runtime 的执行时间，deadline 是相对 period 起点的截止。",
+      "consumer_need_to_know": "sched_deadline_period_min_us/max_us 是系统级 period 上下界；fork/attr 设置时 __schedcheck_deadline_params 校验 runtime<=deadline<=period 且 period 在 [min,max]。"
+    },
+    {
+      "term": "uclamp cgroup",
+      "definition": "cgroup 级 utilization clamping：在 task_group 上设 uclamp.min/max，钳制该组所有任务的 util 到区间。值用 0..1024 或 0..100% 表示，'max'=1024=不钳位。",
+      "consumer_need_to_know": "cpu.uclamp.min/max 调整组的算力下/上界。配合 EAS 选核和提频，调高 min 保证算力但增能耗。"
+    },
+    {
+      "term": "cpuacct",
+      "definition": "cgroup cpuacct 子控制器（cpuacct_cgrp_subsys），per-cgroup 统计 user/sys CPU 时间，所有 cftype 只读（除 usage 可写 0 重置）。",
+      "consumer_need_to_know": "读 usage_user/sys 看该组 user/sys 比例；usage_percpu_* 找热点 CPU；usage_all 一览。用于诊断 cgroup 限额是否合理。"
+    },
+    {
+      "term": "cache-aware",
+      "definition": "cache-aware 调度(v7.2 SCHED_CACHE):调度器按 LLC(Last Level Cache)边界聚合任务,使同 LLC 的任务共享 cache 提升命中率,跨 LLC 迁移时考虑 cache 局部性。",
+      "consumer_need_to_know": "v7.2 新增 CONFIG_SCHED_CACHE(默认 y)。6 个 llc_balancing 参数(enabled/aggr_tolerance/epoch_*/imb_pct/overaggr_pct)控制其行为。LLC miss 高或热点跨 LLC 迁移时考虑。"
+    },
+    {
+      "term": "LLC",
+      "definition": "Last Level Cache,通常即 L3 cache(多核共享)。NUMA 多 socket 系统每 socket 一个 LLC。cache-aware 调度按 LLC 边界聚合任务。",
+      "consumer_need_to_know": "llc_balancing 参数的'LLC'指此。LLC 局部性=任务跑在其数据已 cache 的 LLC 域内,避免跨 LLC 访问的 cache miss。"
+    },
+    {
+      "term": "cache epoch",
+      "definition": "cache-aware 调度(v7.2)的时间窗口,每 epoch 重新评估任务的 cache 亲和统计。epoch_period 控制周期长度(默认 HZ/100=10ms),epoch_affinity_timeout 控制 cache 亲和记录保留多少 epoch 后过期。",
+      "consumer_need_to_know": "epoch 短=更敏感但开销大,长=迟钝但省。任务短时离开 LLC 后回归,若未过 affinity_timeout 仍享 cache 亲和。"
+    },
+    {
+      "term": "SCHED_CACHE",
+      "definition": "v7.2 引入的 cache-aware 调度特性(CONFIG_SCHED_CACHE,默认 y)。在 LLC 边界做任务聚合与负载均衡的 cache 局部性优化。",
+      "consumer_need_to_know": "llc_balancing/ debugfs 目录下的 6 个参数是其接口。开启后影响 migration_cost 的传统迁移策略,两者交互见 playbook interactions。"
+    },
+    {
+      "term": "fair_server",
+      "definition": "v7.2 RT 调度语义变化的核心:fair_server 是为 CFS(普通任务)预留运行时间的服务器实体。v7.2 起 FIFO/RR 任务的节流改由 fair_server/ext_server 承担,sysctl_sched_rt_runtime 现主要约束 DEADLINE 实体总带宽。",
+      "consumer_need_to_know": "v7.2 sysctl_sched_rt_runtime 默认=period(不节流)的原因。RT throttle 频繁时,先查 fair_server/cpuN/runtime 是否被调小,而非直接调 sysctl_sched_rt_runtime。"
+    },
+    {
+      "term": "ext_server",
+      "definition": "v7.2 与 fair_server 配对的服务器实体,为 sched_ext(BPF 调度器)等预留运行时间。语义同 fair_server 但服务于 ext 调度类。",
+      "consumer_need_to_know": "与 fair_server 一起构成 v7.2 RT 带宽新模型。debugfs 有 fair_server/cpuN/ 和 ext_server/cpuN/ 各自的 runtime/period。"
+    },
+    {
+      "term": "RT_PUSH_IPI",
+      "definition": "RT 任务迁移的 IPI push 模式 sched_feat。多 CPU 同时想拉 RT 任务时,改由源 CPU 主动 push 避免 rq->lock 抢锁风暴。v7.2 起非 PREEMPT_RT 内核默认关(false),仅 CONFIG_PREEMPT_RT 默认开。",
+      "consumer_need_to_know": "v7.2 语义变化:非 PREEMPT_RT 关闭是因为 softirq 在非 RT 跑在硬中断上下文有风险。依赖 HAVE_RT_PUSH_IPI 平台支持。"
+    },
+    {
+      "term": "SD_NUMA",
+      "definition": "调度域 flags 中的标志位,表示该 sched domain 跨 NUMA 节点。domain 的 flags 含 SD_NUMA 即跨节点域,迁移成本高。",
+      "consumer_need_to_know": "读 /sys/kernel/debug/sched/domains/cpuN/domainN/flags 判域是否 NUMA 域。NUMA 域的 migration_cost/relax_domain_level 调参意义不同于同节点域。"
+    },
+    {
+      "term": "NAPI",
+      "definition": "New API,网络设备的中断+轮询混合收包机制。网卡中断触发后内核开启 NAPI 轮询,在 softirq(NET_RX_SOFTIRQ)上下文批量从网卡取包,避免每包一次中断。",
+      "consumer_need_to_know": "net 模块多数收包调参围绕 NAPI:dev_weight/netdev_budget/netdev_budget_usecs 决定一次 NAPI 轮询处理多少包/多久;softnet_stat 的 time_squeeze 列揭示 NAPI 因预算退出而非空。"
+    },
+    {
+      "term": "softirq / softnet_data",
+      "definition": "软中断(softirq)是内核延后执行上下文,NET_RX_SOFTIRQ/NET_TX_SOFTIRQ 跑收发包处理。softnet_data 是 per-CPU 收包统计结构,/proc/net/softnet_stat 暴露其字段。",
+      "consumer_need_to_know": "softnet_stat 15 列 hex 是 net 收包诊断核心:第2列 dropped=per-CPU backlog 满;第3列 time_squeeze=NAPI 因预算退出;第10列 received_rps=RPS 工作;第11列 flow_limit_count=单流暴增被限。"
+    },
+    {
+      "term": "backlog (netdev_max_backlog)",
+      "definition": "per-CPU 收包软中断队列(input_pkt_queue/process_queue)。NAPI 从网卡取的包先入 backlog,再被软中断处理。netdev_max_backlog 是其上限,超限丢包并计入 softnet_stat dropped。",
+      "consumer_need_to_know": "softnet_stat dropped 高先看是 NAPI 处理能力不足(dev_weight/budget)还是 backlog 容量不够(max_backlog)。调大 max_backlog 是最后手段,会掩盖拥塞信号。"
+    },
+    {
+      "term": "RSS / RPS / RFS",
+      "definition": "RSS=Receive Side Scaling,网卡硬件把收包按 hash 分到多个 RX queue(不同 IRQ);RPS=Receive Packet Steering,软件层把收包软中断跨 CPU 分发;RFS=Receive Flow Steering,RPS 的流感知版,把流映射到 socket 所在 CPU。",
+      "consumer_need_to_know": "rps_sock_flow_entries 是 RFS 全局表槽数(0=禁用)。RSS 是硬件层(/proc/sys/net/core/netdev_rss_key readonly),RPS/RFS 是软件层,两者互补。硬中断 IRQ 亲和性路由不在此(转 irq 模块)。"
+    },
+    {
+      "term": "flow limit",
+      "definition": "per-CPU 单流 PPS 限速机制(CONFIG_NET_FLOW_LIMIT)。当某 CPU 上单流 PPS 暴增拖慢 softirq 时,flow limit 用哈希桶对单流做软限速。flow_limit_cpu_bitmap 按 CPU 位图启用,flow_limit_table_len 是 per-CPU 哈希桶数。",
+      "consumer_need_to_know": "softnet_stat 第11列 flow_limit_count > 0 = flow limit 曾触发。多 CPU 抢锁风暴或单流拖慢 softirq 时考虑开,但可能误限正常高带宽单流。"
+    },
+    {
+      "term": "busy poll (NAPI)",
+      "definition": "socket 阻塞读/select/poll/epoll 期间直接轮询网卡 NAPI(而非等软中断唤醒)的低延迟模式。sysctl_net_busy_poll 是全局默认时长,sysctl_net_busy_read 是 per-socket sk_ll_usec 默认。需 CONFIG_NET_RX_BUSY_POLL。",
+      "consumer_need_to_know": "默认 0=禁用。>0 降低网络接收延迟但加剧 CPU 占用与电量。CPU 富余且延迟敏感(如 HFT/低延迟交易)时开,CPU 紧张则不开。"
+    },
+    {
+      "term": "qdisc / qdisc_max_burst",
+      "definition": "queueing discipline,网卡发送侧的队列规则(如 fq_codel/pfifo_fast)。default_qdisc 是新建网卡默认 qdisc。qdisc_max_burst 是 NET_TX_SOFTIRQ 一次 qdisc 出队批量上限。",
+      "consumer_need_to_know": "TX 队列堆积时调大 qdisc_max_burst 或 dev_weight_tx_bias。default_qdisc 改后只影响之后创建的 netdev,已存在网卡不改。需 CONFIG_NET_SCHED。"
+    },
+    {
+      "term": "TSO / GSO / GRO",
+      "definition": "TSO=TCP Segmentation Offload,网卡硬件分段;GSO=Generic Segmentation Offload,软件层分段延迟到发往网卡前;GRO=Generic Receive Offload,收方向合并包。max_skb_frags 限制单 skb 的 frag 段数,gro_normal_batch 控制 GRO 退出时的合并批量。",
+      "consumer_need_to_know": "max_skb_frags 影响 TSO/GSO 聚合度(默认 17=MAX_SKB_FRAGS)。gro_normal_batch 平衡 GRO 吞吐(大)与延迟(小)。skb_defer_max=0 会 static_branch 关闭整套 defer 优化,非数值调小。"
+    },
+    {
+      "term": "skb / truesize / frag",
+      "definition": "sk_buff(socket buffer)是网络包的核心数据结构。truesize 是 skb 占用总内存(含开销)。frag 是 skb 的分片段scatter-gather 段,网卡/协议栈用 frags 聚合多段内存。",
+      "consumer_need_to_know": "max_skb_frags 限制单 skb frags 段数。high_order_alloc_disable=1 禁用 compound page(大页)优化会显著增加 SKB truesize,仅调试用。"
+    },
+    {
+      "term": "cgroup net_cls / classid",
+      "definition": "net_cls cgroup 子系统(CONFIG_CGROUP_NET_CLASSID)把组内所有任务的 socket 打上 cgroup classid(u32),tc 用 cls_cgroup 过滤器据此分流。classid 是该 cgroup 的可写值。",
+      "consumer_need_to_know": "写 classid 会 iterate_fd 批量更新已建 socket(每 1000 fd 释放一次 task_lock),大 fd 表写有可见开销。新建 socket 自动继承当前 cgroup 的 classid。"
+    },
+    {
+      "term": "CIPSO / NetLabel",
+      "definition": "Common IP Security Option,CIPSO 是 IPv4 选项头里携带 MLS/敏感度标签的协议(NetLabel 框架)。CONFIG_NETLABEL 启用。用于强制访问控制(SELinux/审计)。",
+      "consumer_need_to_know": "cipso_cache_enable/cache_bucket_size/rbm_optfmt/rbm_strictvalid 四件套控制 CIPSO 缓存与校验。性能敏感开 cache,安全敏感开 strictvalid(默认 1)。"
+    },
+    {
+      "term": "inet_peer / peer cache",
+      "definition": "per-remote-peer 信息缓存(IP ID/TTL/rtt 等不随 socket 持有的 per-IP 状态)。inet_peer_threshold 是条目上限,inet_peer_minttl/maxttl 是 TTL(高负载/常规)。",
+      "consumer_need_to_know": "大量远端 peer 时 peer 信息被频繁回收重建可调大 threshold。minttl 是高负载下(达 threshold)的最短保留,maxttl 是常规 TTL。默认按 hashinfo size clamp。"
+    },
+    {
+      "term": "FIB / fib_sync_mem",
+      "definition": "Forwarding Information Base,IP 路由表。fib_trie 是 FIB 的 trie 数据结构。fib_sync_mem 是 tnode(trie 节点)释放阈值,达到后同步释放而非 RCU 延后。",
+      "consumer_need_to_know": "fib_sync_mem 默认 512KB。改大减少 RCU 释放积压(内存峰值低)但加剧单次同步阻塞;改小缩短阻塞但增加 RCU 释放积压峰值。"
+    },
+    {
+      "term": "TCP orphan (tcp_max_orphans)",
+      "definition": "TCP orphan 是已关闭 fd 但内核仍持有(等 FIN/重传/_TIME_WAIT 前的 ESTABLISH/FIN-WAIT)的 socket。tcp_max_orphans 是其全局上限,超限强制杀 orphan 释放内存。",
+      "consumer_need_to_know": "大量短连接产生大量 orphan,超 tcp_max_orphans 会被强制 RST。调大放宽 orphan 上限(加剧内存占用),调小更早杀 orphan 控制内存。"
+    },
+    {
+      "term": "BPF JIT / harden / kallsyms",
+      "definition": "BPF JIT=把 BPF 字节码编译为本地机器码提升性能;harden=加固(常量盲化/指针混淆);kallsyms=JIT 镜像是否进 /proc/kallsyms;bpf_jit_limit=JIT 可执行内存总上限。需 CONFIG_BPF_JIT。",
+      "consumer_need_to_know": "bpf_jit_enable=2 是调试用勿生产(pr_warn 警告)。CONFIG_BPF_JIT_ALWAYS_ON 时 enable 永久锁定 1。写 harden/kallsyms/limit 需 CAP_SYS_ADMIN。"
+    },
+    {
+      "term": "static_key (net)",
+      "definition": "内核的 static_branch 机制,把常量条件编译为代码 patch 点,运行时切换几乎零开销。net 用 skb_defer_disable_key(net_hotdata.sysctl_skb_defer_max=0 触发)、net_high_order_alloc_disable_key、rps_needed/rfs_needed 等。",
+      "consumer_need_to_know": "skb_defer_max=0 不是数值调小,而是 static_branch_enable 关闭整套 defer 优化路径。high_order_alloc_disable=1 同理禁用 compound page 优化。生产慎用。"
+    },
+    {
+      "term": "netns / fallback tunnel",
+      "definition": "network namespace(netns)是网络栈隔离单元。fallback tunnel 是内核为 sit/gre/ipip 等自动创建的默认 tunnel。fb_tunnels_only_for_init_net 控制是否为非 init_net 建 fallback tunnel。",
+      "consumer_need_to_know": "容器/子 netns 不希望自动有 fallback tunnel 时设 fb_tunnels_only_for_init_net=1(仅 init_net)或 2(都不建)。devconf_inherit_init_net 控制新 netns 的 devconf 继承/重置策略(4 值枚举)。"
+    },
+    {
+      "term": "ECMP / multipath hash",
+      "definition": "Equal-Cost Multi-Path,等价多路径路由。fib_multipath_hash_policy 控制 hash 策略(0=L3/1=L4/2=flowinfo/3=字段位图),fib_multipath_hash_fields 是字段位图(仅 policy=3 生效)。需 CONFIG_IP_ROUTE_MULTIPATH。",
+      "consumer_need_to_know": "ECMP 流分布不均时调到 policy=3 并按需设 hash_fields 位图(如加入源/目的端口)。更多字段提升精度但增加计算开销。IPv4/IPv6 各有此对参数。"
+    },
+    {
+      "term": "IPv6 flow label",
+      "definition": "IPv6 头里的 20 位 flow label 字段,标识属于同一流。auto_flowlabels 控制是否自动打(0/1/2/3),flowlabel_reflect 位图控制哪些场景反射入向 flow label,flowlabel_consistency 控制严格校验。",
+      "consumer_need_to_know": "flow label 用于策略路由/负载分担。auto_flowlabels 默认 1=OPTOUT(应用可选开)。flowlabel_reflect 位图(0~7)控制 ICMPv6 echo reply/TCP 等是否反射入向 flow label。"
+    },
+    {
+      "term": "HBH / DST options (IPv6)",
+      "definition": "IPv6 扩展头:Hop-by-Hop Options(每跳处理)和 Destination Options(目的端处理)。max_dst_opts_number/max_hbh_opts_number 是数量上限,max_dst_opts_length/max_hbh_length 是字节上限。",
+      "consumer_need_to_know": "IPv6 包因选项超限被丢弃时调大对应上限。默认 cnt=8/8,len=INT_MAX=不限。放宽会加剧解析开销(尤其 HBH 每跳)和滥用风险。"
+    },
+    {
+      "term": "ULP (TCP Upper Layer Protocol)",
+      "definition": "TCP Upper Layer Protocol,在 TCP socket 上层挂接的协议处理(如 mptcp/uplink)。tcp_available_ulp readonly 列出当前注册的 ULP。应用 setsockopt(TCP_ULP, name) 选择。",
+      "consumer_need_to_know": "setsockopt(TCP_ULP) 失败时核对名称是否在 tcp_available_ulp 列表。mptcp 等可用性受 CONFIG_MPTCP 等编译开关影响。"
+    },
+    {
+      "term": "IOAM6 / Segment Routing",
+      "definition": "IOAM6=In-Band OAM for IPv6,在 IPv6 扩展头里携带节点跟踪信息;Segment Routing(SRv6/seg6)用源路由头指定路径。ioam6_id/ioam6_id_wide 是本节点 ID,seg6_flowlabel 控制 SR 包的 flow label 来源。",
+      "consumer_need_to_know": "ioam6_id/ioam6_id_wide 默认未配置(U32_MAX>>8/U64_MAX>>8)。seg6_flowlabel 默认 0=不自动设 SR flow label。启用 IOAM6/SR 会放大信息暴露面。"
+    },
+    {
+      "term": "compound page / high order alloc",
+      "definition": "compound page 是多个连续物理页组合成的大页(高阶分配)。net 用 compound page 优化 skb 分配降低 truesize。net_high_order_alloc_disable_key 是禁用此优化的 static_key。",
+      "consumer_need_to_know": "high_order_alloc_disable=1 禁用 compound page 优化,加剧 SKB truesize 与网络内存开销,仅调试用(排查大页分配问题时)。生产应=0。"
+    },
+    {
+      "term": "RPS",
+      "definition": "Receive Packet Steering,软中断收包时把包分发到其他 CPU 的 backlog 队列处理,缓解单 CPU 收包瓶颈。/proc/sys/net/core/rps_sock_flow_entries 控制全局 RFS 流表大小。",
+      "consumer_need_to_know": "收包软中断 CPU 打满时考虑调 rps_sock_flow_entries。与 RFS 配合定位包到同 CPU 处理保局部性。"
+    },
+    {
+      "term": "RFS",
+      "definition": "Receive Flow Steering,RPS 的增强:把同流包送到该流正在被处理的 CPU,保 cache 局部性。rps_sock_flow_entries 是其流表大小。",
+      "consumer_need_to_know": "与 RPS 配合。调 rps_sock_flow_entries 影响 RFS 流表规模。"
+    },
+    {
+      "term": "GRO",
+      "definition": "Generic Receive Offload,收包路径合并同流的多个包成一个大包再上协议栈,减少协议栈处理开销。",
+      "consumer_need_to_know": "收包软中断高时,确认 GRO 开启(网卡/驱动层),net 核心层不直接调但影响收包效率。"
+    },
+    {
+      "term": "GSO",
+      "definition": "Generic Segmentation Offload,发包路径允许协议栈下发超大 sk_buff,网卡分段,减少协议栈分段开销。",
+      "consumer_need_to_know": "与 TSO 配合提升发包吞吐。tunables 不直接调但影响发包性能基线。"
+    },
+    {
+      "term": "TSO",
+      "definition": "TCP Segmentation Offload,网卡把大 TCP 段分段,减少 CPU 协议栈分段开销。与 GSO 相关。",
+      "consumer_need_to_know": "TCP 吞吐瓶颈时确认 TSO 开启(网卡层)。net sysctl 不直接调。"
+    },
+    {
+      "term": "busy_poll",
+      "definition": "busy_poll(busy_read)允许 socket 收包时主动轮询网卡队列(而非等软中断),降低收包延迟,代价是 CPU 占用。/proc/sys/net/core/busy_poll/busy_read。",
+      "consumer_need_to_know": "低延迟网络(如 HFT)用 busy_poll 提升响应;代价是 CPU 一直忙等。普通负载别开。"
+    },
+    {
+      "term": "netdev_max_backlog",
+      "definition": "软中断收包的全局 backlog 队列深度上限(/proc/sys/net/core/netdev_max_backlog)。包超此丢弃。",
+      "consumer_need_to_know": "丢包率高且 backlog 满时调大;代价是内存与延迟。配 dev_weight 调单次处理量。"
+    },
+    {
+      "term": "dev_weight",
+      "definition": "软中断一次 NAPI poll 处理的包数权重(/proc/sys/net/core/dev_weight,默认与 CPU 数相关)。dev_weight_rx_bias/tx_bias 调收发偏置。",
+      "consumer_need_to_know": "收包软中断 CPU 打满但 backlog 不满时调大 dev_weight 增单次处理量;过大可能饿其他软中断。"
+    },
+    {
+      "term": "congestion control",
+      "definition": "TCP 拥塞控制算法,/proc/sys/net/ipv4/tcp_congestion_control 选择(如 cubic/bbr/reno)。决定 cwnd 如何随网络状况增长/收缩。",
+      "consumer_need_to_know": "高 BDP/长肥管道用 bbr(基于带宽探测);普通用 cubic。改算法是网络吞吐调优的核心。"
+    },
+    {
+      "term": "cwnd / BDP",
+      "definition": "cwnd(congestion window)拥塞窗口,TCP 在途未确认数据量上限;BDP(bandwidth-delay product)=带宽×RTT,是 cwnd 的理想上限参考。",
+      "consumer_need_to_know": "调 tcp_rmem/tcp_wmem 的上限影响 cwnd 上限。BDP 大的链路需大缓冲否则吞吐上不去。"
+    },
+    {
+      "term": "BBR",
+      "definition": "两种 TCP 拥塞控制算法:CUBIC(默认,基于丢包的窗口增长函数)、BBR(基于带宽探测,不依赖丢包判断拥塞)。tcp_congestion_control 切换。",
+      "consumer_need_to_know": "BBR 适合高 BDP/有 buffer 的链路;CUBIC 适合低延迟丢包敏感。改前确认内核编译支持。"
+    },
+    {
+      "term": "net_cls",
+      "definition": "cgroup net_cls 控制器,给 cgroup 内 socket 打 classid 标记,配合 tc(流量控制)做 per-cgroup 流量分类/限速。/sys/fs/cgroup/net_cls.<name>/classid。",
+      "consumer_need_to_know": "想对某 cgroup 网络流量做 QoS/限速时用 net_cls 打标 + tc 规则。CONFIG_CGROUP_NET_CLASSID。"
+    },
+    {
+      "term": "flow_limit",
+      "definition": "per-CPU flow limit,限制单 CPU 处理同流的包数上限(/proc/sys/net/core/flow_limit_cpu_bitmap/flow_limit_table_len),防某流独占 CPU。",
+      "consumer_need_to_know": "某流打满收包 CPU 影响其他流时考虑开 flow_limit;默认关。"
+    },
+    {
+      "term": "softirq",
+      "definition": "网络收发软中断:NET_RX_SOFTIRQ 收包、NET_TX_SOFTIRQ 发包。/proc/net/softnet_stat 的列反映收包软中断状态(被处理/丢弃/时间回收。",
+      "consumer_need_to_know": "/proc/net/softnet_stat 是诊断收包瓶颈的核心:drop 列>0、time_squeeze 高=单次没处理完被压回,指向 dev_weight/backlog 调参。"
+    },
+    {
+      "term": "bpf_jit",
+      "definition": "BPF 程序的 JIT 编译开关(/proc/sys/net/core/bpf_jit_enable)。开则 BPF 字节码编成原生码提速。bpf_jit_harden 加固、bpf_jit_kallsyms 暴露符号、bpf_jit_limit 内存上限。",
+      "consumer_need_to_know": "用 BPF(eBPF/XDP)且性能敏感时开 bpf_jit_enable=1;安全敏感场景开 bpf_jit_harden。"
+    },
+    {
+      "term": "CUBIC",
+      "definition": "默认 TCP 拥塞控制算法(v7.2 仍默认),基于丢包的 cubic 窗口增长函数。tcp_congestion_control 默认值。",
+      "consumer_need_to_know": "普通网络用 CUBIC 即可;高 BDP/长肥管道考虑切 BBR。"
+    }
+  ]
+}

@@ -1,0 +1,3873 @@
+{
+  "module": "sched",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "name": "base_slice_ns",
+      "kernel_name": "sysctl_sched_base_slice",
+      "path": "/sys/kernel/debug/sched/base_slice_ns",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ns",
+      "default": 700000,
+      "range": {
+        "min": 0
+      },
+      "summary": "EEVDF 调度下每个 CFS 任务一次被调度可运行的基础时间片（request size），决定抢占/切换粒度。",
+      "increasing": {
+        "good_for": [
+          "延长单次运行",
+          "减少抢占和上下文切换",
+          "提升吞吐"
+        ],
+        "bad_for": [
+          "加剧调度延迟",
+          "恶化交互/低延迟响应"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "缩短调度延迟",
+          "提升交互响应"
+        ],
+        "bad_for": [
+          "增加上下文切换开销",
+          "降低吞吐"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:1249",
+        "kernel/sched/fair.c:5376",
+        "kernel/sched/core.c:4719",
+        "kernel/sched/fair.c:1086"
+      ],
+      "version_notes": "debugfs 里看到/写入的是 700000 的缩放结果：实际生效值 = normalized(700000) * 缩放因子，因子由 tunable_scaling 决定（默认 SCHED_TUNABLESCALING_LOG = 1+ilog2(在线CPU数，封顶8)，见 fair.c:192 get_update_sysctl_factor）。直接写 debugfs 会同时更新 normalized 值（sched_update_scaling）。",
+      "when_to_increase": [
+        "高负载吞吐瓶颈",
+        "上下文切换开销占比高"
+      ],
+      "when_to_decrease": [
+        "调度延迟敏感任务响应慢",
+        "交互响应差"
+      ]
+    },
+    {
+      "name": "migration_cost_ns",
+      "kernel_name": "sysctl_sched_migration_cost",
+      "path": "/sys/kernel/debug/sched/migration_cost_ns",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ns",
+      "default": 500000,
+      "range": {
+        "min": 0,
+        "special": {
+          "0": "所有任务视为 cache-cold，cache-hot 检查不阻止迁移",
+          "-1": "所有任务视为 cache-hot，cache-hot 检查始终阻止迁移（即禁用基于 cache 热度的迁移）"
+        }
+      },
+      "summary": "cache-hot 检测阈值：任务自开始运行以来未超过该时长的视为 cache-hot，负载均衡时倾向不迁移它以保住 cache 局部性。同时作为 wakeup 抢占阈值与 newidle 平衡门槛。",
+      "increasing": {
+        "good_for": [
+          "提升 cache 局部性",
+          "减少跨 CPU 迁移"
+        ],
+        "bad_for": [
+          "加剧负载不均",
+          "降低跨 CPU 利用率均衡"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "促进负载均衡",
+          "提升跨 CPU 利用率均衡"
+        ],
+        "bad_for": [
+          "增加 cache miss",
+          "增加迁移开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:9649",
+        "kernel/sched/fair.c:9634",
+        "kernel/sched/fair.c:9028",
+        "kernel/sched/fair.c:13146",
+        "kernel/sched/core.c:8996"
+      ],
+      "when_to_increase": [
+        "cache 命中率低",
+        "热点任务被频繁跨 CPU 迁走"
+      ],
+      "when_to_decrease": [
+        "负载不均某 CPU 闲置",
+        "跨 CPU 利用率差需更激进迁移"
+      ]
+    },
+    {
+      "name": "nr_migrate",
+      "kernel_name": "sysctl_sched_nr_migrate",
+      "path": "/sys/kernel/debug/sched/nr_migrate",
+      "category": "tunable",
+      "gate": "",
+      "unit": "个任务/次",
+      "default": 32,
+      "range": {
+        "min": 0
+      },
+      "summary": "一次负载均衡过程最多迁移的任务数上限（env.loop_max 上限）。",
+      "increasing": {
+        "good_for": [
+          "提升单次均衡迁移任务数",
+          "加速消除不均衡"
+        ],
+        "bad_for": [
+          "加剧 rq 锁持时长",
+          "导致均衡突发抖动"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "降低 rq 锁持时长",
+          "使迁移更平缓"
+        ],
+        "bad_for": [
+          "减慢不均衡消除",
+          "降低单次均衡吞吐"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:12171",
+        "kernel/sched/fair.c:9940"
+      ],
+      "version_notes": "默认值 = SCHED_NR_MIGRATE_BREAK：CONFIG_PREEMPT_RT 下为 8，否则为 32（sched.h:3049-3052）。",
+      "when_to_increase": [
+        "不均衡消除过慢",
+        "单次均衡迁移任务不够"
+      ],
+      "when_to_decrease": [
+        "rq 锁持时长过长",
+        "均衡突发导致抖动"
+      ]
+    },
+    {
+      "name": "latency_warn_ms",
+      "kernel_name": "sysctl_resched_latency_warn_ms",
+      "path": "/sys/kernel/debug/sched/latency_warn_ms",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ms",
+      "default": 100,
+      "range": {
+        "min": 0
+      },
+      "summary": "调度延迟告警阈值：CPU 持续 need_resched 且迟迟未真正切换时，超过该时长内核告警（配合 LATENCY_WARN sched_feat）。纯诊断用。",
+      "increasing": {
+        "good_for": [
+          "减少告警噪声"
+        ],
+        "bad_for": [
+          "漏报真实调度延迟问题"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升对调度延迟的灵敏度"
+        ],
+        "bad_for": [
+          "增加告警噪声"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:5589",
+        "kernel/sched/core.c:5627"
+      ],
+      "when_to_increase": [
+        "告警噪声过多想降噪",
+        "只想抓大延迟尖刺"
+      ],
+      "when_to_decrease": [
+        "想更早暴露调度延迟",
+        "怀疑有调度延迟但告警没触发"
+      ]
+    },
+    {
+      "name": "tunable_scaling",
+      "kernel_name": "sched_scaling_fops",
+      "path": "/sys/kernel/debug/sched/tunable_scaling",
+      "category": "tunable",
+      "gate": "",
+      "unit": "enum(0/1/2)",
+      "default": 2,
+      "range": {
+        "min": 0,
+        "max": 2,
+        "special": {
+          "0": "SCHED_TUNABLESCALING_NONE: 不缩放",
+          "1": "SCHED_TUNABLESCALING_LINEAR: 因子=在线CPU数(封顶8)",
+          "2": "SCHED_TUNABLESCALING_LOG: 因子=1+ilog2(在线CPU数, 封顶8)"
+        }
+      },
+      "summary": "控制 sched 可调参数（目前实际只作用于 base_slice_ns）随 CPU 数量的缩放方式。写入后触发 sched_update_scaling() 重算生效值。",
+      "increasing": {
+        "good_for": [
+          "提升高核数下生效时间片",
+          "减少上下文切换"
+        ],
+        "bad_for": [
+          "加剧与手工调参冲突",
+          "低核数下同样缩放失真"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "使参数与核数解耦",
+          "提升可预测性"
+        ],
+        "bad_for": [
+          "高核数下调度粒度过细",
+          "增加切换开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:197",
+        "kernel/sched/debug.c:186",
+        "kernel/sched/fair.c:72"
+      ],
+      "when_to_increase": [
+        "高核数下想自动放大时间片",
+        "上下文切换开销过高"
+      ],
+      "when_to_decrease": [
+        "想参数与核数解耦可预测",
+        "低核数下时间片被错误放大"
+      ]
+    },
+    {
+      "name": "sched_rt_period_us",
+      "kernel_name": "sysctl_sched_rt_period",
+      "path": "/proc/sys/kernel/sched_rt_period_us",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "us",
+      "default": 1000000,
+      "range": {
+        "min": 1,
+        "max": 2147483647
+      },
+      "summary": "RT 带宽控制的周期（period）。与 sched_rt_runtime_us 一起限制 RT 任务在周期内最多占用的 CPU 时间比例。",
+      "increasing": {
+        "good_for": [
+          "扩大带宽控制窗口",
+          "使 RT 节流更粗"
+        ],
+        "bad_for": [
+          "减慢 RT 超额后恢复",
+          "恶化突发 RT 负载响应"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "加速 RT 超额后恢复",
+          "提升带宽控制粒度"
+        ],
+        "bad_for": [
+          "加剧 RT 节流判定频率",
+          "增加记账开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/rt.c:2871",
+        "kernel/sched/rt.c:2844",
+        "kernel/sched/rt.c:18"
+      ],
+      "when_to_increase": [
+        "想要更大带宽窗口",
+        "RT 节流后恢复太快想拉长周期"
+      ],
+      "when_to_decrease": [
+        "想要 RT 超额后更快恢复",
+        "带宽控制想更细粒度"
+      ]
+    },
+    {
+      "name": "sched_rt_runtime_us",
+      "kernel_name": "sysctl_sched_rt_runtime",
+      "path": "/proc/sys/kernel/sched_rt_runtime_us",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "us",
+      "default": 1000000,
+      "range": {
+        "min": -1,
+        "special": {
+          "-1": "RT 带宽无限（关闭 RT 节流）"
+        }
+      },
+      "summary": "每个 period 内允许 RT 任务运行的时间上限，超出则该 RT 队列被节流到下一周期。写 -1 关闭 RT 节流。最大值受 sched_rt_period_us 当前值约束（写超会被拒）。v7.2 起默认=period（1000000=不节流），因 FIFO/RR 任务已由 fair_server/ext_server 节流，本参数现主要约束 DEADLINE 实体的总带宽。",
+      "increasing": {
+        "good_for": [
+          "减少 RT 任务节流",
+          "提升 RT 吞吐"
+        ],
+        "bad_for": [
+          "加剧非 RT 任务饥饿",
+          "恶化系统响应"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "保护非 RT 任务",
+          "提升系统响应"
+        ],
+        "bad_for": [
+          "增加 RT 任务被节流"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/rt.c:24",
+        "kernel/sched/rt.c:sched_rt_global_validate",
+        "kernel/sched/rt.c:sched_rt_handler"
+      ],
+      "version_notes": "v7.2: 默认值 950000→1000000（commit c2e390197ad1），语义变化：FIFO/RR 节流改由 fair_server/ext_server 承担，本参数现主要约束 DEADLINE 实体总带宽。默认 runtime==period 即不节流。",
+      "when_to_increase": [
+        "RT 任务被过度节流",
+        "想给 RT 更多运行时间"
+      ],
+      "when_to_decrease": [
+        "非 RT 任务被 RT 饿死",
+        "想给系统/普通任务留更多 CPU"
+      ]
+    },
+    {
+      "name": "sched_rr_timeslice_ms",
+      "kernel_name": "sysctl_sched_rr_timeslice",
+      "path": "/proc/sys/kernel/sched_rr_timeslice_ms",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "ms",
+      "default": 100,
+      "range": {
+        "min": 0
+      },
+      "summary": "SCHED_RR 调度类任务的运行时间片。写 0 恢复为默认值（RR_TIMESLICE=100ms@HZ=1000）。",
+      "increasing": {
+        "good_for": [
+          "减少 RR 任务切换次数"
+        ],
+        "bad_for": [
+          "恶化 RR 任务间轮转公平性"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升 RR 任务轮转公平性"
+        ],
+        "bad_for": [
+          "增加切换开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/rt.c:2917",
+        "kernel/sched/rt.c:27"
+      ],
+      "when_to_increase": [
+        "RR 任务切换开销过高",
+        "RR 任务想跑更久再轮转"
+      ],
+      "when_to_decrease": [
+        "RR 任务间轮转公平性差",
+        "想更频繁轮转 RR 任务"
+      ]
+    },
+    {
+      "name": "sched_energy_aware",
+      "kernel_name": "sysctl_sched_energy_aware",
+      "path": "/proc/sys/kernel/sched_energy_aware",
+      "category": "tunable",
+      "gate": "CONFIG_CPU_FREQ_GOV_SCHEDUTIL CONFIG_ENERGY_MODEL CONFIG_PROC_SYSCTL",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "EAS（Energy-Aware Scheduling）总开关：0 关闭按能耗模型（EM）选择 CPU 的调度，1 打开。置 0 后触发 rebuild_sched_domains_energy() 重建能耗相关调度域。",
+      "increasing": {
+        "good_for": [
+          "提升能效",
+          "促进按能耗模型选核"
+        ],
+        "bad_for": [
+          "可能偏向小核降低峰值性能"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "解除能耗模型约束",
+          "提升性能优先级"
+        ],
+        "bad_for": [
+          "增加能耗"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:7109",
+        "kernel/sched/topology.c:292",
+        "kernel/sched/topology.c:211"
+      ],
+      "version_notes": "gate 依赖 CONFIG_ENERGY_MODEL + CONFIG_CPU_FREQ_GOV_SCHEDUTIL；若系统不支持 EAS（sched_is_eas_possible 为假），写会返回 EOPNOTSUPP。",
+      "when_to_increase": [
+        "能效优先想按能耗模型选 CPU",
+        "移动/省电场景"
+      ],
+      "when_to_decrease": [
+        "性能优先不想受能耗模型约束",
+        "极端性能场景"
+      ]
+    },
+    {
+      "name": "sched_util_clamp_min",
+      "kernel_name": "sysctl_sched_uclamp_util_min",
+      "path": "/proc/sys/kernel/sched_util_clamp_min",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL CONFIG_UCLAMP_TASK",
+      "unit": "0..1024",
+      "default": 1024,
+      "range": {
+        "min": 0,
+        "max": 1024
+      },
+      "summary": "未显式设置 uclamp.min 的任务的默认 CPU 利用率下限（最低频率/最小算力约束）。值域 0..SCHED_CAPACITY_SCALE(1024)；默认 1024 表示不施加下限。要求 min <= sched_util_clamp_max。",
+      "increasing": {
+        "good_for": [
+          "提升任务最低算力/频率保证",
+          "降低延迟"
+        ],
+        "bad_for": [
+          "加剧能耗",
+          "使小核/低功耗 CPU 利用率下降"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "降低能耗",
+          "允许任务跑在小核"
+        ],
+        "bad_for": [
+          "减弱最小性能保证",
+          "低延迟任务可能跑不动"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:2013",
+        "kernel/sched/core.c:1957",
+        "kernel/sched/core.c:1542"
+      ],
+      "when_to_increase": [
+        "任务最低算力/频率保证不足",
+        "低延迟任务跑在小核"
+      ],
+      "when_to_decrease": [
+        "任务最低算力约束过紧浪费能耗",
+        "想让任务跑在小核省电"
+      ]
+    },
+    {
+      "name": "sched_cfs_bandwidth_slice_us",
+      "kernel_name": "sysctl_sched_cfs_bandwidth_slice",
+      "path": "/proc/sys/kernel/sched_cfs_bandwidth_slice_us",
+      "category": "tunable",
+      "gate": "CONFIG_CFS_BANDWIDTH CONFIG_SYSCTL",
+      "unit": "us",
+      "default": 5000,
+      "range": {
+        "min": 1
+      },
+      "summary": "CFS 带宽控制的运行时发放粒度（slice）：周期内运行时以该粒度为增量补发（sched_cfs_bandwidth_slice()）。",
+      "increasing": {
+        "good_for": [
+          "减少带宽记账/定时开销"
+        ],
+        "bad_for": [
+          "恶化带宽控制粒度"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升带宽发放平滑度",
+          "细化控制"
+        ],
+        "bad_for": [
+          "增加记账/定时开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:5883",
+        "kernel/sched/fair.c:125"
+      ],
+      "when_to_increase": [
+        "带宽记账/定时开销过高",
+        "CFS 带宽发放想粗粒度"
+      ],
+      "when_to_decrease": [
+        "带宽发放不够平滑",
+        "想细粒度控制带宽发放"
+      ]
+    },
+    {
+      "name": "numa_balancing_promote_rate_limit_MBps",
+      "kernel_name": "sysctl_numa_balancing_promote_rate_limit",
+      "path": "/proc/sys/kernel/numa_balancing_promote_rate_limit_MBps",
+      "category": "tunable",
+      "gate": "CONFIG_NUMA_BALANCING CONFIG_SYSCTL",
+      "unit": "MB/s",
+      "default": 65536,
+      "range": {
+        "min": 0
+      },
+      "summary": "NUMA promotion（把内存页升级迁移到更近的 NUMA node）每目标节点的吞吐上限（MB/s）。0 表示不限制。",
+      "increasing": {
+        "good_for": [
+          "加速 NUMA 局部性收敛",
+          "减少远 node 访问"
+        ],
+        "bad_for": [
+          "加剧 promotion 迁移占带宽",
+          "加剧迁移开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "抑制 promotion 迁移开销"
+        ],
+        "bad_for": [
+          "减慢 NUMA 局部性收敛"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:130"
+      ],
+      "when_to_increase": [
+        "NUMA 局部性收敛过慢",
+        "远 node 访问过多"
+      ],
+      "when_to_decrease": [
+        "promotion 迁移占用带宽过多",
+        "迁移开销过大"
+      ]
+    },
+    {
+      "name": "PLACE_LAG",
+      "kernel_name": "sysctl_sched_features[bit PLACE_LAG]",
+      "path": "/sys/kernel/debug/sched/features/PLACE_LAG",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool（写 NAME 启用，写 NO_NAME 关闭）",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "EEVDF 放置策略 #1：唤醒/迁移时按 avg_vruntime 保留任务的虚拟滞后(lag)，保持按比例公平；关闭则退化为策略 #2。",
+      "increasing": {
+        "good_for": [
+          "启用 lag 保留",
+          "提升按比例公平性"
+        ],
+        "bad_for": [
+          "增加放置路径计算开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "简化放置决策路径"
+        ],
+        "bad_for": [
+          "丧失滞后保持",
+          "恶化公平性"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:5399",
+        "kernel/sched/fair.c:9729"
+      ],
+      "when_to_increase": [
+        "唤醒/迁移后公平性不足",
+        "交互任务一致性差"
+      ],
+      "when_to_decrease": [
+        "放置路径开销过高",
+        "不需要保留 lag"
+      ]
+    },
+    {
+      "name": "SIS_UTIL",
+      "kernel_name": "sysctl_sched_features[bit SIS_UTIL]",
+      "path": "/sys/kernel/debug/sched/features/SIS_UTIL",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool（写 NAME 启用，写 NO_NAME 关闭）",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "唤醒选核（select_idle_cpu）时基于 LLC 域利用率判断，过载时减少对空闲 CPU 的无谓扫描（SIS_PROP/SIS 相关）。",
+      "increasing": {
+        "good_for": [
+          "启用基于利用率的选核抑制",
+          "减少无谓 LLC 扫描"
+        ],
+        "bad_for": [
+          "过载判断不准时选核质量下降"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升选核仔细度"
+        ],
+        "bad_for": [
+          "增加扫描开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:7957",
+        "kernel/sched/fair.c:11313"
+      ],
+      "when_to_increase": [
+        "唤醒选核扫描开销过高",
+        "过载时无谓 LLC 扫描多"
+      ],
+      "when_to_decrease": [
+        "选核质量下降过载判断不准",
+        "想更仔细扫描空闲 CPU"
+      ]
+    },
+    {
+      "name": "TTWU_QUEUE",
+      "kernel_name": "sysctl_sched_features[bit TTWU_QUEUE]",
+      "path": "/sys/kernel/debug/sched/features/TTWU_QUEUE",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool（写 NAME 启用，写 NO_NAME 关闭）",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "远程唤醒（try_to_wake_up）时把唤醒事件排队到目标 CPU，用调度器 IPI 统一处理，降低 rq->lock 竞争和跨 CPU 缓存抖动。",
+      "increasing": {
+        "good_for": [
+          "启用远程唤醒排队",
+          "降低 rq->lock 竞争"
+        ],
+        "bad_for": [
+          "增加唤醒一步排队延迟"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "使唤醒路径更直接"
+        ],
+        "bad_for": [
+          "加剧锁竞争",
+          "加剧缓存抖动"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:3959"
+      ],
+      "version_notes": "CONFIG_PREEMPT_RT 下默认关闭（features.h:81-90）。",
+      "when_to_increase": [
+        "多核唤醒锁竞争高",
+        "跨 CPU 缓存抖动多"
+      ],
+      "when_to_decrease": [
+        "唤醒多一步排队延迟敏感",
+        "单核场景无锁竞争"
+      ]
+    },
+    {
+      "name": "weight",
+      "kernel_name": "cpu_weight_write_u64",
+      "path": "/sys/fs/cgroup/cpu.<name>/weight",
+      "category": "tunable",
+      "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_WEIGHT",
+      "unit": "1..10000",
+      "default": 100,
+      "range": {
+        "min": 1,
+        "max": 10000
+      },
+      "summary": "cgroup 的 CPU 权重：决定同一 CPU 上各 cgroup 之间 CFS 带宽的相对分配比例（内部换算成 shares/load weight）。默认 100 约等于 nice 0。",
+      "increasing": {
+        "good_for": [
+          "提升该组 CPU 份额"
+        ],
+        "bad_for": [
+          "稀释其他组份额"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "让出 CPU 给其他组"
+        ],
+        "bad_for": [
+          "降低该组吞吐"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:10361",
+        "kernel/sched/core.c:10366"
+      ],
+      "version_notes": "cgroup v2 的 cpu.weight（本条目）；legacy 接口是 cpu.shares。根 cgroup 不可写（CFTYPE_NOT_ON_ROOT）。",
+      "when_to_increase": [
+        "该 cgroup 想获更多 CPU 份额",
+        "某组响应差份额不够"
+      ],
+      "when_to_decrease": [
+        "该 cgroup 占 CPU 过多",
+        "想让出 CPU 给其他组"
+      ]
+    },
+    {
+      "name": "max",
+      "kernel_name": "cpu_max_write",
+      "path": "/sys/fs/cgroup/cpu.<name>/max",
+      "category": "tunable",
+      "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_BANDWIDTH",
+      "unit": "格式：<quota_us> <period_us>；quota 可写 max",
+      "default": "max 100000",
+      "range": {
+        "special": {
+          "max": "quota 无限（不节流）"
+        }
+      },
+      "summary": "cgroup 的 CPU 带宽上限：每个 period(µs) 内该组最多运行 quota(µs)；quota 写 max 表示不限。默认 period 100000µs(100ms)、quota=max。",
+      "increasing": {
+        "good_for": [
+          "提升该组可用 CPU 时间"
+        ],
+        "bad_for": [
+          "加剧其他组被挤占"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "严格限制该组 CPU 占用"
+        ],
+        "bad_for": [
+          "降低该组吞吐/响应"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:10460",
+        "kernel/sched/core.c:10423"
+      ],
+      "version_notes": "cgroup v2 接口；legacy 对应 cpu.cfs_quota_us / cpu.cfs_period_us。根 cgroup 不可写（CFTYPE_NOT_ON_ROOT）。",
+      "when_to_increase": [
+        "该组想获更多 CPU 时间",
+        "组吞吐不足"
+      ],
+      "when_to_decrease": [
+        "该组挤占其他组",
+        "想严格限制该组 CPU"
+      ]
+    },
+    {
+      "name": "max.burst",
+      "kernel_name": "cpu_burst_write_u64",
+      "path": "/sys/fs/cgroup/cpu.<name>/max.burst",
+      "category": "tunable",
+      "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_BANDWIDTH",
+      "unit": "us",
+      "default": 0,
+      "range": {
+        "min": 0
+      },
+      "summary": "cgroup 的 CPU 突发(burst)额度：允许在 quota 之外短期透支使用的额外运行时间（后续周期偿还）。默认 0 表示不突发。",
+      "increasing": {
+        "good_for": [
+          "允许短期透支 quota",
+          "缓解突发节流"
+        ],
+        "bad_for": [
+          "加剧其他组短期被挤占"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "严格限额"
+        ],
+        "bad_for": [
+          "突发负载被节流"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:10141",
+        "kernel/sched/core.c:6798"
+      ],
+      "version_notes": "cgroup v2 接口；legacy 对应 cpu.cfs_burst_us。根 cgroup 不可写（CFTYPE_NOT_ON_ROOT）。",
+      "when_to_increase": [
+        "短期突发负载被节流",
+        "延迟敏感突发需透支"
+      ],
+      "when_to_decrease": [
+        "该组透支挤占其他组",
+        "想严格限额"
+      ]
+    },
+    {
+      "name": "isolcpus",
+      "kernel_name": "housekeeping_isolcpus_setup",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline：isolcpus=[子参数,]cpulist",
+      "default": "未指定（不隔离）",
+      "range": {
+        "special": {
+          "domain": "从调度域/负载均衡排除",
+          "nohz": "等价 nohz_full（跑 full dynticks）",
+          "managed_irq": "不在这些 CPU 上放置托管中断"
+        }
+      },
+      "summary": "把指定 CPU 从内核 housekeeping / 调度域中隔离出去。无子参数时默认 domain（从负载均衡调度域排除）。用于给专用/确定性负载预留 CPU。",
+      "increasing": {
+        "good_for": [
+          "提升被隔离 CPU 的确定性/隔离性"
+        ],
+        "bad_for": [
+          "降低整体负载均衡能力",
+          "可能让被隔离 CPU 闲置"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "恢复被隔离 CPU 参与调度"
+        ],
+        "bad_for": [
+          "丧失隔离性"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/isolation.c:314",
+        "kernel/sched/isolation.c:361"
+      ],
+      "when_to_increase": [
+        "想隔离 CPU 做专用/确定性负载",
+        "housekeeping 噪声干扰"
+      ],
+      "when_to_decrease": [
+        "恢复被隔离 CPU 参与调度",
+        "隔离性不再需要"
+      ]
+    },
+    {
+      "name": "nohz_full",
+      "kernel_name": "housekeeping_nohz_full_setup",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline：nohz_full=cpulist",
+      "default": "未指定（不隔离）",
+      "range": {},
+      "summary": "指定 CPU 运行 full dynticks（无 tick/内核定时器噪声）：这些 CPU 不接收周期性调度 tick 和大部分 housekeeping 中断。至少需要保留一个 CPU 做 housekeeping（含当前 boot CPU）。",
+      "increasing": {
+        "good_for": [
+          "去除调度 tick 噪声",
+          "提升隔离 CPU 确定性"
+        ],
+        "bad_for": [
+          "必须留 housekeeping CPU",
+          "降低时钟/tick 精度"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "恢复系统行为简单"
+        ],
+        "bad_for": [
+          "丧失隔离性"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/isolation.c:304",
+        "kernel/sched/isolation.c:291"
+      ],
+      "when_to_increase": [
+        "隔离 CPU 上跑低延迟/确定性负载",
+        "调度 tick 噪声干扰"
+      ],
+      "when_to_decrease": [
+        "时钟/tick 精度需求高",
+        "不再需要 dynticks 隔离"
+      ]
+    },
+    {
+      "name": "preempt",
+      "kernel_name": "setup_preempt_mode",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_HAVE_PREEMPT_DYNAMIC_CALL CONFIG_PREEMPTION CONFIG_PREEMPT_DYNAMIC",
+      "unit": "enum: none / voluntary / full / lazy",
+      "default": "跟随编译时 CONFIG_PREEMPT_* 配置",
+      "range": {
+        "special": {
+          "none": "几乎不抢占",
+          "voluntary": "仅在显式让出点抢占",
+          "full": "全抢占",
+          "lazy": "延迟抢占（需要 ARCH_HAS_PREEMPT_LAZY）"
+        }
+      },
+      "summary": "动态选择内核抢占模式（CONFIG_PREEMPT_DYNAMIC 的 static_call 机制），运行时覆盖编译期的抢占配置。同一套内核可在启动时换模式。",
+      "increasing": {
+        "good_for": [
+          "提升抢占响应",
+          "降低调度延迟"
+        ],
+        "bad_for": [
+          "降低吞吐",
+          "加剧内核临界区锁开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升吞吐",
+          "减少抢占开销"
+        ],
+        "bad_for": [
+          "升高调度延迟",
+          "恶化交互响应"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:7965",
+        "kernel/sched/core.c:7872"
+      ],
+      "version_notes": "可用模式随 config 变化：PREEMPT_RT 或 ARCH_HAS_PREEMPT_LAZY 时 none/voluntary 不可选，lazy 仅在 ARCH_HAS_PREEMPT_LAZY 下可选（core.c:7872 sched_dynamic_mode）。",
+      "when_to_increase": [
+        "想切到 full/lazy 降延迟",
+        "延迟敏感场景"
+      ],
+      "when_to_decrease": [
+        "想切到 none/voluntary 提吞吐",
+        "抢占开销过高"
+      ]
+    },
+    {
+      "name": "relax_domain_level",
+      "kernel_name": "setup_relax_domain_level",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "int（调度域层级，-1=不限制）",
+      "default": -1,
+      "range": {
+        "min": -1
+      },
+      "summary": "指定从哪个调度域层级起关闭空闲平衡（清除 SD_BALANCE_WAKE | SD_BALANCE_NEWIDLE），用于 legacy cpuset 的“域松弛”。值越大影响的高层域越多。",
+      "increasing": {
+        "good_for": [
+          "减少高层域空闲唤醒均衡",
+          "降低噪声省电"
+        ],
+        "bad_for": [
+          "降低负载均衡能力"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升均衡充分性"
+        ],
+        "bad_for": [
+          "增加唤醒均衡开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/topology.c:1540",
+        "kernel/sched/topology.c:1516"
+      ],
+      "when_to_increase": [
+        "高层域空闲均衡噪声多",
+        "想省电降噪声"
+      ],
+      "when_to_decrease": [
+        "负载均衡能力不足",
+        "唤醒均衡开销可接受"
+      ]
+    },
+    {
+      "name": "nohlt",
+      "kernel_name": "cpu_idle_poll_setup",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_GENERIC_IDLE_POLL_SETUP",
+      "unit": "flag",
+      "default": "未指定（使用平台默认 idle）",
+      "range": {},
+      "summary": "强制所有 CPU 空闲时用 poll（忙等）而不是停转(HLT/停钟)，消除中断唤醒延迟，但显著增加功耗。",
+      "increasing": {
+        "good_for": [
+          "消除空闲唤醒延迟",
+          "提升空闲中断响应"
+        ],
+        "bad_for": [
+          "显著增加 idle 功耗"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "降低 idle 功耗",
+          "恢复深 C-state"
+        ],
+        "bad_for": [
+          "增加唤醒延迟"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/idle.c:42",
+        "kernel/sched/idle.c:34"
+      ],
+      "when_to_increase": [
+        "空闲唤醒延迟过高",
+        "延迟敏感场景"
+      ],
+      "when_to_decrease": [
+        "idle 耗电过高",
+        "想恢复深 C-state 省电"
+      ]
+    },
+    {
+      "name": "sched_thermal_decay_shift",
+      "kernel_name": "setup_sched_thermal_decay_shift",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "",
+      "unit": "deprecated",
+      "deprecated": true,
+      "default": "忽略",
+      "range": {},
+      "summary": "已废弃的 cmdline 选项：任何取值都会被忽略，仅打印一条 deprecation 警告（fair.c:84 setup_sched_thermal_decay_shift）。",
+      "increasing": {
+        "good_for": [
+          "(已废弃,改无效)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(已废弃,改无效)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "kernel/sched/fair.c:84"
+      ],
+      "version_notes": "deprecated，接受但无任何效果，建议从启动参数移除。",
+      "when_to_increase": [],
+      "when_to_decrease": []
+    },
+    {
+      "name": "features",
+      "kernel_name": "sched_feat_fops",
+      "path": "/sys/kernel/debug/sched/features",
+      "category": "tunable",
+      "gate": "",
+      "unit": "cmdline",
+      "default": "见 features.h 各 SCHED_FEAT 默认（NO_ 前缀=禁用）",
+      "summary": "EEVDF/CFS 调度特性开关集合，写入 NAME 启用、NO_NAME 禁用对应特性（位掩码存于 sysctl_sched_features）。读写通过 sched_feat_fops，show 列出全部开关状态。",
+      "increasing": {
+        "good_for": [
+          "启用对应 sched_feat 位"
+        ],
+        "bad_for": [
+          "误启用可能影响吞吐或延迟"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "禁用对应 sched_feat 位"
+        ],
+        "bad_for": [
+          "可能丢失 EEVDF 默认优化"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/debug.c:sched_feat_set",
+        "kernel/sched/features.h:SCHED_FEAT"
+      ],
+      "version_notes": "解析逻辑：写 'NAME' 设置位 i，写 'NO_NAME' 清位 i（debug.c:sched_feat_set）。每个 bit 对应一个 SCHED_FEAT 项，详见 features/ 各项。",
+      "when_to_increase": [
+        "想按需启用 cache/wakeup/延迟等微调特性"
+      ],
+      "when_to_decrease": [
+        "想关闭特定路径以符合既有调优模型"
+      ]
+    },
+    {
+      "name": "verbose",
+      "kernel_name": "sched_debug_verbose",
+      "path": "/sys/kernel/debug/sched/verbose",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": false,
+      "summary": "调度器调试详细输出开关。开启后会触发 update_sched_domain_debugfs() 创建 /sys/kernel/debug/sched/domains 子树，并在 topology.c 多处打印调度域拓扑信息；关闭会移除 domains 子树。",
+      "increasing": {
+        "good_for": [
+          "创建 domains 子树",
+          "暴露调度域拓扑详情"
+        ],
+        "bad_for": [
+          "增加 debugfs 节点和打印开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 debugfs 维护开销"
+        ],
+        "bad_for": [
+          "移除 domains/... 参数暴露"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/debug.c:sched_verbose_write",
+        "kernel/sched/topology.c:update_sched_domain_debugfs"
+      ],
+      "when_to_increase": [
+        "想诊断调度域拓扑",
+        "需要 domains/... 详细参数"
+      ],
+      "when_to_decrease": [
+        "debugfs 维护开销过高",
+        "不再需要 domains 子树"
+      ]
+    },
+    {
+      "name": "preempt",
+      "kernel_name": "sched_dynamic_fops",
+      "path": "/sys/kernel/debug/sched/preempt",
+      "category": "tunable",
+      "gate": "CONFIG_PREEMPT_DYNAMIC",
+      "unit": "enum: none voluntary full lazy",
+      "default": "由 CONFIG_PREEMPT_* 与 preempt= cmdline 决定（preempt_dynamic_init）",
+      "summary": "动态抢占模式选择器：写 none/voluntary/full/lazy 切换内核抢占模型（运行时改 cond_resched/preempt_schedule 等静态调用或 static_key）。读返回当前模式（用括号标注）。",
+      "increasing": {
+        "good_for": [
+          "提升抢占响应",
+          "降低调度延迟"
+        ],
+        "bad_for": [
+          "加剧抢占开销",
+          "降低吞吐"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少抢占",
+          "提升吞吐"
+        ],
+        "bad_for": [
+          "升高调度延迟",
+          "恶化交互响应"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:sched_dynamic_update",
+        "kernel/sched/core.c:preempt_dynamic_init"
+      ],
+      "version_notes": "与 cmdline preempt=（setup_preempt_mode）属同一机制不同入口：本参数为运行时切换的 debugfs 入口。lazy 模式依赖 CONFIG_ARCH_HAS_PREEMPT_LAZY；CONFIG_PREEMPT_RT 下不支持 none/voluntary。preempt_modes[] = {\"none\",\"voluntary\",\"full\",\"lazy\",NULL}。",
+      "when_to_increase": [
+        "运行时想切 full/lazy 降延迟",
+        "延迟敏感场景"
+      ],
+      "when_to_decrease": [
+        "运行时想切 none/voluntary 提吞吐",
+        "抢占开销过高"
+      ]
+    },
+    {
+      "name": "latency_warn_once",
+      "kernel_name": "sysctl_resched_latency_warn_once",
+      "path": "/sys/kernel/debug/sched/latency_warn_once",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "resched 延迟告警去重开关。与 latency_warn_ms 配合：任务 set_need_resched 后超过 latency_warn_ms 仍未实际调度时打印告警；本开关=1 时每个启动周期只告警一次。",
+      "increasing": {
+        "good_for": [
+          "减少告警噪声",
+          "只首次提示延迟问题"
+        ],
+        "bad_for": [
+          "后续延迟问题被静音"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "持续暴露每次 resched 延迟"
+        ],
+        "bad_for": [
+          "增加日志噪声"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:resched_latency_warn"
+      ],
+      "version_notes": "依赖 SCHED_FEAT LATENCY_WARN（默认 false）打开告警路径才有效。",
+      "when_to_increase": [
+        "告警噪声过多只想首次提示",
+        "后续延迟问题已跟踪"
+      ],
+      "when_to_decrease": [
+        "想持续观察每次 resched 延迟超标"
+      ]
+    },
+    {
+      "name": "scan_delay_ms",
+      "kernel_name": "sysctl_numa_balancing_scan_delay",
+      "path": "/sys/kernel/debug/sched/numa_balancing/scan_delay_ms",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ms",
+      "default": 1000,
+      "summary": "NUMA balancing 任务首次扫描前的延迟（ms）。任务启动后隔此延迟才开始 PTE 扫描；同时用于 VMA_PID_RESET_PERIOD（4*scan_delay）重置访问位图。",
+      "increasing": {
+        "good_for": [
+          "减少启动期扫描扰动"
+        ],
+        "bad_for": [
+          "推迟 NUMA hint fault 采集",
+          "减慢均衡决策"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提早开始 NUMA 信息采集"
+        ],
+        "bad_for": [
+          "加剧启动期扫描开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:task_nr_scan_windows",
+        "kernel/sched/fair.c:numa_should_migrate_task"
+      ],
+      "version_notes": "scan_recipes gate 为空但源码处 #ifdef CONFIG_NUMA_BALANCING 包裹；按 PRODUCER 约定以 scan 工单为准。仅在 CONFIG_NUMA_BALANCING 编译时存在。",
+      "when_to_increase": [
+        "启动期扫描扰动过大",
+        "想推迟 NUMA 扫描启动"
+      ],
+      "when_to_decrease": [
+        "NUMA 信息采集过晚",
+        "均衡决策推迟太久"
+      ]
+    },
+    {
+      "name": "scan_period_min_ms",
+      "kernel_name": "sysctl_numa_balancing_scan_period_min",
+      "path": "/sys/kernel/debug/sched/numa_balancing/scan_period_min_ms",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ms",
+      "default": 1000,
+      "summary": "NUMA PTE 扫描周期的下限（ms）。实际扫描周期 = max(scan_period_min / nr_scan_windows, floor)，floor=1000/(MAX_SCAN_WINDOW/scan_size) 防止大任务过频扫描。",
+      "increasing": {
+        "good_for": [
+          "降低扫描频率",
+          "减少扫描开销"
+        ],
+        "bad_for": [
+          "减慢 NUMA 信息更新",
+          "恶化均衡滞后"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升扫描频率",
+          "使 NUMA 信息新鲜"
+        ],
+        "bad_for": [
+          "加剧 PTE 扫描 CPU 开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:task_scan_min",
+        "kernel/sched/fair.c:task_scan_start"
+      ],
+      "version_notes": "仅在 CONFIG_NUMA_BALANCING 编译时存在。",
+      "when_to_increase": [
+        "扫描开销过高想降频",
+        "PTE 扫描 CPU 占用大"
+      ],
+      "when_to_decrease": [
+        "NUMA 信息更新慢",
+        "均衡滞后"
+      ]
+    },
+    {
+      "name": "scan_period_max_ms",
+      "kernel_name": "sysctl_numa_balancing_scan_period_max",
+      "path": "/sys/kernel/debug/sched/numa_balancing/scan_period_max_ms",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ms",
+      "default": 60000,
+      "summary": "NUMA PTE 扫描周期的上限（ms）。实际扫描周期上限 = scan_period_max / nr_scan_windows（再按 numa_group shared/private 比例放大）。也作为 NUMA 域均衡的 throttle 周期 th_period。",
+      "increasing": {
+        "good_for": [
+          "使任务扫描更稀疏",
+          "节省扫描开销"
+        ],
+        "bad_for": [
+          "拉长 NUMA 均衡周期",
+          "减慢迁移"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "加速扫描和 NUMA 迁移响应"
+        ],
+        "bad_for": [
+          "加剧扫描频率和均衡开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:task_scan_max",
+        "kernel/sched/fair.c:numa_balancing_throttle"
+      ],
+      "version_notes": "仅在 CONFIG_NUMA_BALANCING 编译时存在。",
+      "when_to_increase": [
+        "任务扫描想更稀疏省开销",
+        "NUMA 均衡周期过长可接受"
+      ],
+      "when_to_decrease": [
+        "NUMA 迁移响应过慢",
+        "扫描周期上限过长"
+      ]
+    },
+    {
+      "name": "scan_size_mb",
+      "kernel_name": "sysctl_numa_balancing_scan_size",
+      "path": "/sys/kernel/debug/sched/numa_balancing/scan_size_mb",
+      "category": "tunable",
+      "gate": "",
+      "unit": "MB",
+      "default": 256,
+      "summary": "每次 NUMA 扫描的地址空间大小（MB），定义扫描窗口大小 MB_TO_PAGES(scan_size)。nr_scan_windows = round_up(RSS, scan_size_pages)/scan_size_pages，决定扫描周期分母。",
+      "increasing": {
+        "good_for": [
+          "提升单次扫描覆盖",
+          "覆盖大任务"
+        ],
+        "bad_for": [
+          "加剧单次扫描开销",
+          "降低扫描频率"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升扫描细致度",
+          "提升扫描频率"
+        ],
+        "bad_for": [
+          "大任务需更多扫描窗口",
+          "增加总扫描开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:task_nr_scan_windows",
+        "kernel/sched/fair.c:task_scan_min"
+      ],
+      "version_notes": "仅在 CONFIG_NUMA_BALANCING 编译时存在。MAX_SCAN_WINDOW=2560 限制最小扫描窗口数。",
+      "when_to_increase": [
+        "单次扫描覆盖不足",
+        "大任务扫描窗口太小"
+      ],
+      "when_to_decrease": [
+        "单次扫描开销过大",
+        "想更细致扫描"
+      ]
+    },
+    {
+      "name": "hot_threshold_ms",
+      "kernel_name": "sysctl_numa_balancing_hot_threshold",
+      "path": "/sys/kernel/debug/sched/numa_balancing/hot_threshold_ms",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ms",
+      "default": 1000,
+      "summary": "NUMA memory tiering 中页热度阈值（ms）：页 hint fault 延迟 >= 阈值视为 cold（不提升迁移），< 阈值视为 hot 候选提升（promote 到 toptier 节点）。pgdat->nbp_threshold 由其经 numa_promotion_adjust_threshold 调整。",
+      "increasing": {
+        "good_for": [
+          "增加 hot 候选页",
+          "提升 promotion 迁移"
+        ],
+        "bad_for": [
+          "可能误提升冷页",
+          "浪费带宽"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "只提升很热的页",
+          "减少误提升"
+        ],
+        "bad_for": [
+          "减少提升候选",
+          "tiering 不充分"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:numa_should_promote",
+        "kernel/sched/fair.c:numa_promotion_adjust_threshold"
+      ],
+      "version_notes": "仅 CONFIG_NUMA_BALANCING + memory tiering 路径生效。默认 MSEC_PER_SEC=1000。",
+      "when_to_increase": [
+        "更多页被视作 hot 想提升迁移",
+        "tiering 提升不充分"
+      ],
+      "when_to_decrease": [
+        "误提升冷页浪费带宽",
+        "只想提升很热的页"
+      ]
+    },
+    {
+      "name": "min_interval",
+      "kernel_name": "sd->min_interval",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/min_interval",
+      "category": "tunable",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "unit": "jiffies",
+      "default": "sd_weight（如 MC 层 weight=域内 CPU 数）",
+      "summary": "该调度域负载均衡最小间隔（jiffies）。每次均衡成功后 balance_interval 重置到 min_interval；当所有任务 pinned 或 LBF_ALL_PINNED 时按 2x 增长直到 max_interval。",
+      "increasing": {
+        "good_for": [
+          "拉长均衡间隔",
+          "降低均衡频率"
+        ],
+        "bad_for": [
+          "减慢均衡响应",
+          "加剧负载不均"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升均衡频率",
+          "加速负载均摊"
+        ],
+        "bad_for": [
+          "加剧均衡锁竞争和开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_balance_cpus",
+        "kernel/sched/topology.c:sd_init"
+      ],
+      "version_notes": "仅当 sched_debug_verbose=true 时该 domains/ 子树才被创建（update_sched_domain_debugfs）；否则路径不存在。sd 字段在 topology.c:sd_init 默认值按层级覆盖。",
+      "when_to_increase": [
+        "均衡间隔过短锁竞争多",
+        "想拉长均衡间隔"
+      ],
+      "when_to_decrease": [
+        "均衡响应过慢",
+        "负载不均加重"
+      ]
+    },
+    {
+      "name": "max_interval",
+      "kernel_name": "sd->max_interval",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/max_interval",
+      "category": "tunable",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "unit": "jiffies",
+      "default": "2*sd_weight",
+      "summary": "该调度域负载均衡最大间隔（jiffies）。balance_interval 增长上限，pinned 情况下封顶 MAX_PINNED_INTERVAL。",
+      "increasing": {
+        "good_for": [
+          "使均衡更稀疏",
+          "节省开销"
+        ],
+        "bad_for": [
+          "减慢负载不均恢复"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升均衡激进性"
+        ],
+        "bad_for": [
+          "增加开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_balance_cpus",
+        "kernel/sched/fair.c:update_max_interval"
+      ],
+      "version_notes": "仅当 sched_debug_verbose=true 时该 domains/ 子树才被创建（update_sched_domain_debugfs）；否则路径不存在。sd 字段在 topology.c:sd_init 默认值按层级覆盖。",
+      "when_to_increase": [
+        "均衡想更稀疏省开销",
+        "开销过高"
+      ],
+      "when_to_decrease": [
+        "负载不均恢复过慢",
+        "想更激进均衡"
+      ]
+    },
+    {
+      "name": "max_newidle_lb_cost",
+      "kernel_name": "sd->max_newidle_lb_cost",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/max_newidle_lb_cost",
+      "category": "tunable",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "unit": "ns",
+      "default": 0,
+      "summary": "该域 newidle 负载均衡的历史最大代价（ns）。用于 newidle 均衡决策：若 rq->avg_idle < max_newidle_lb_cost 则跳过该域 newidle 均衡；每 64 次 update 一阶低通衰减（*253/256）。",
+      "increasing": {
+        "good_for": [
+          "提升 newidle 均衡触发概率"
+        ],
+        "bad_for": [
+          "avg_idle 长的 CPU 可能被反复均衡"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "抑制 newidle 均衡触发"
+        ],
+        "bad_for": [
+          "空闲 CPU 不再拉任务",
+          "加剧负载不均"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_balance_newidle",
+        "kernel/sched/fair.c:update_newidle_cost"
+      ],
+      "version_notes": "仅当 sched_debug_verbose=true 时该 domains/ 子树才被创建（update_sched_domain_debugfs）；否则路径不存在。sd 字段在 topology.c:sd_init 默认值按层级覆盖。",
+      "when_to_increase": [
+        "newidle 均衡被跳过过多",
+        "想更易触发 newidle 均衡"
+      ],
+      "when_to_decrease": [
+        "newidle 均衡被 avg_idle 长的 CPU 反复触发",
+        "想抑制 newidle 均衡"
+      ]
+    },
+    {
+      "name": "busy_factor",
+      "kernel_name": "sd->busy_factor",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/busy_factor",
+      "category": "tunable",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "unit": "",
+      "default": 16,
+      "summary": "CPU 繁忙时 balance_interval 的乘数。get_sd_balance_interval 在 cpu_busy 时 interval *= busy_factor，使繁忙域均衡间隔更长以减少干扰。",
+      "increasing": {
+        "good_for": [
+          "拉长繁忙时均衡间隔",
+          "减少繁忙域干扰"
+        ],
+        "bad_for": [
+          "减慢繁忙时负载不均恢复"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升繁忙时均衡频率"
+        ],
+        "bad_for": [
+          "加剧繁忙域锁开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:get_sd_balance_interval"
+      ],
+      "version_notes": "仅当 sched_debug_verbose=true 时该 domains/ 子树才被创建（update_sched_domain_debugfs）；否则路径不存在。sd 字段在 topology.c:sd_init 默认值按层级覆盖。",
+      "when_to_increase": [
+        "繁忙时均衡干扰过多",
+        "想拉长繁忙域均衡间隔"
+      ],
+      "when_to_decrease": [
+        "繁忙时负载不均恢复过慢",
+        "想更频繁均衡"
+      ]
+    },
+    {
+      "name": "imbalance_pct",
+      "kernel_name": "sd->imbalance_pct",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/imbalance_pct",
+      "category": "tunable",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "unit": "%",
+      "default": "117（NUMA 域 110，DIE 117，MC 默认 117）",
+      "summary": "域负载不均衡判定阈值（百分比）。当 group_util/group_capacity * imbalance_pct 与对端比较时判定是否 overloaded/has_capacity，决定是否触发迁移和迁移量。",
+      "increasing": {
+        "good_for": [
+          "提升对不均衡的容忍",
+          "减少迁移"
+        ],
+        "bad_for": [
+          "加剧负载不均"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升均衡激进性"
+        ],
+        "bad_for": [
+          "增加迁移开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:group_is_overloaded",
+        "kernel/sched/fair.c:group_has_capacity",
+        "kernel/sched/fair.c:group_classify"
+      ],
+      "version_notes": "仅当 sched_debug_verbose=true 时该 domains/ 子树才被创建（update_sched_domain_debugfs）；否则路径不存在。sd 字段在 topology.c:sd_init 默认值按层级覆盖。",
+      "when_to_increase": [
+        "均衡过频想容忍更多不均衡",
+        "迁移开销过大"
+      ],
+      "when_to_decrease": [
+        "不均衡加剧",
+        "想更激进均衡"
+      ]
+    },
+    {
+      "name": "cache_nice_tries",
+      "kernel_name": "sd->cache_nice_tries",
+      "path": "/sys/kernel/debug/sched/domains/cpuN/domainN/cache_nice_tries",
+      "category": "tunable",
+      "gate": "",
+      "per_cpu": true,
+      "per_domain": true,
+      "unit": "",
+      "default": "0/1/2（按层级递增）",
+      "summary": "该域负载均衡时允许 cache-hot 任务被迁出的尝试次数。nr_balance_failed > cache_nice_tries 时即使任务 hot 也允许迁移，否则保留 hot 任务。",
+      "increasing": {
+        "good_for": [
+          "更易迁出 hot 任务",
+          "提升均衡激进性"
+        ],
+        "bad_for": [
+          "增加 cache miss"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "更保守保 cache 局部性"
+        ],
+        "bad_for": [
+          "减少均衡机会"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:can_migrate_task"
+      ],
+      "version_notes": "仅当 sched_debug_verbose=true 时该 domains/ 子树才被创建（update_sched_domain_debugfs）；否则路径不存在。sd 字段在 topology.c:sd_init 默认值按层级覆盖。",
+      "when_to_increase": [
+        "cache-hot 任务不愿迁",
+        "均衡不够激进"
+      ],
+      "when_to_decrease": [
+        "cache miss 增多",
+        "想更保守保 cache"
+      ]
+    },
+    {
+      "name": "PLACE_DEADLINE_INITIAL",
+      "kernel_name": "sysctl_sched_features[bit PLACE_DEADLINE_INITIAL]",
+      "path": "/sys/kernel/debug/sched/features/PLACE_DEADLINE_INITIAL",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "EEVDF 新任务初始 deadline 安置：新任务获得半个 slice 的初始 deadline 以平滑加入竞争。关闭则改用其他安置策略。",
+      "increasing": {
+        "good_for": [
+          "启用新任务半 slice 初始 deadline",
+          "平滑新任务加入"
+        ],
+        "bad_for": [
+          "略偏袒新任务"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "严格按 vruntime 排队"
+        ],
+        "bad_for": [
+          "新任务可能更难获取初始 CPU"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:enqueue_entity"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "新任务加入竞争被饿",
+        "新任务初始 deadline 不平滑"
+      ],
+      "when_to_decrease": [
+        "想严格按 vruntime 排队",
+        "不想要新任务偏袒"
+      ]
+    },
+    {
+      "name": "PLACE_REL_DEADLINE",
+      "kernel_name": "sysctl_sched_features[bit PLACE_REL_DEADLINE]",
+      "path": "/sys/kernel/debug/sched/features/PLACE_REL_DEADLINE",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "任务迁移（跨 CPU/域）时是否保留相对虚拟 deadline。开启则迁移后 deadline 相对保留，跨域调度连续性更好。",
+      "increasing": {
+        "good_for": [
+          "启用迁移后 deadline 相对保留",
+          "提升跨域连续性"
+        ],
+        "bad_for": [
+          "可能保留过时 deadline"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "迁移后重新计算 deadline"
+        ],
+        "bad_for": [
+          "跨域可能短期不公平"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:set_task_cpu"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "跨域迁移后调度连续性差",
+        "deadline 丢失"
+      ],
+      "when_to_decrease": [
+        "担心保留过时 deadline",
+        "想迁移后重算"
+      ]
+    },
+    {
+      "name": "RUN_TO_PARITY",
+      "kernel_name": "sysctl_sched_features[bit RUN_TO_PARITY]",
+      "path": "/sys/kernel/debug/sched/features/RUN_TO_PARITY",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "唤醒抢占抑制：当前任务运行到 vruntime parity（0-lag 点）或耗尽 slice 前，不允许唤醒抢占。配合 PREEMPT_SHORT 使用。",
+      "increasing": {
+        "good_for": [
+          "抑制唤醒抢占至 parity",
+          "让当前任务跑完合理份额"
+        ],
+        "bad_for": [
+          "升高唤醒任务响应延迟"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "允许唤醒立即抢占"
+        ],
+        "bad_for": [
+          "加剧抢占频繁",
+          "加剧 cache 抖动"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:check_preempt_wakeup"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "唤醒抢占噪声过多",
+        "当前任务跑不完合理份额"
+      ],
+      "when_to_decrease": [
+        "唤醒任务响应延迟高",
+        "想允许立即抢占"
+      ]
+    },
+    {
+      "name": "PREEMPT_SHORT",
+      "kernel_name": "sysctl_sched_features[bit PREEMPT_SHORT]",
+      "path": "/sys/kernel/debug/sched/features/PREEMPT_SHORT",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "允许 slice 较短的任务在 RUN_TO_PARITY 保护到达前抢占当前任务。给小 slice 高优先级任务更早的运行机会。",
+      "increasing": {
+        "good_for": [
+          "允许短 slice 任务提前抢占",
+          "提升短任务响应"
+        ],
+        "bad_for": [
+          "打断当前任务",
+          "加剧调度频繁"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "保留当前任务 parity 保护"
+        ],
+        "bad_for": [
+          "短任务等待变长"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:check_preempt_wakeup"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "短 slice 高优先任务响应慢",
+        "想给小 slice 任务更早运行"
+      ],
+      "when_to_decrease": [
+        "当前任务被打断过多",
+        "调度频繁"
+      ]
+    },
+    {
+      "name": "NEXT_BUDDY",
+      "kernel_name": "sysctl_sched_features[bit NEXT_BUDDY]",
+      "path": "/sys/kernel/debug/sched/features/NEXT_BUDDY",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": false,
+      "summary": "唤醒失败抢占时，是否把刚唤醒的任务设为下一个 buddy（pick_next 选它）。开启倾向运行刚唤醒任务（cache 局部性）。",
+      "increasing": {
+        "good_for": [
+          "提升唤醒任务 cache 局部性"
+        ],
+        "bad_for": [
+          "可能饿死其他任务"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "不强制选刚唤醒任务"
+        ],
+        "bad_for": [
+          "唤醒任务可能延迟"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:wake_up_new_task",
+        "kernel/sched/fair.c:pick_task_fair"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "唤醒任务 cache 局部性差",
+        "想让刚唤醒任务优先运行"
+      ],
+      "when_to_decrease": [
+        "其他任务被饿死",
+        "不强制选刚唤醒任务"
+      ]
+    },
+    {
+      "name": "PICK_BUDDY",
+      "kernel_name": "sysctl_sched_features[bit PICK_BUDDY]",
+      "path": "/sys/kernel/debug/sched/features/PICK_BUDDY",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "是否允许从 cfs_rq->next 中选 buddy（next 可由 NEXT_BUDDY/yield_to/cgroup dequeue 设置）。",
+      "increasing": {
+        "good_for": [
+          "保留 yield_to 等 buddy 选择"
+        ],
+        "bad_for": [
+          "可能引入非 vruntime 顺序选择"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "严格按 vruntime 选"
+        ],
+        "bad_for": [
+          "yield_to 等语义失效"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:pick_next_entity"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "yield_to 等场景需保留 buddy 选择"
+      ],
+      "when_to_decrease": [
+        "想严格按 vruntime 选",
+        "非 vruntime 顺序选择引入问题"
+      ]
+    },
+    {
+      "name": "CACHE_HOT_BUDDY",
+      "kernel_name": "sysctl_sched_features[bit CACHE_HOT_BUDDY]",
+      "path": "/sys/kernel/debug/sched/features/CACHE_HOT_BUDDY",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "把 buddy 视为 cache-hot，降低其被迁走的概率。提升 cache 局部性。",
+      "increasing": {
+        "good_for": [
+          "提升 buddy cache 局部性"
+        ],
+        "bad_for": [
+          "阻碍负载均衡"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升均衡激进性"
+        ],
+        "bad_for": [
+          "增加 cache miss"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:can_migrate_task"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "buddy 被迁走 cache miss 多",
+        "想保 cache 局部性"
+      ],
+      "when_to_decrease": [
+        "负载均衡被 buddy 阻碍",
+        "想更激进均衡"
+      ]
+    },
+    {
+      "name": "DELAY_DEQUEUE",
+      "kernel_name": "sysctl_sched_features[bit DELAY_DEQUEUE]",
+      "path": "/sys/kernel/debug/sched/features/DELAY_DEQUEUE",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "延迟出队：非 eligible 任务出队时延迟到被选中或唤醒，留在竞争队列中烧掉负 lag。",
+      "increasing": {
+        "good_for": [
+          "延迟非 eligible 任务出队",
+          "保留公平性"
+        ],
+        "bad_for": [
+          "加长就绪队列",
+          "增加调度开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "立即出队"
+        ],
+        "bad_for": [
+          "负 lag 立即清零",
+          "可能饿死短任务"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:dequeue_entities"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "任务反复入出队开销大",
+        "短任务被饿"
+      ],
+      "when_to_decrease": [
+        "就绪队列过长",
+        "想立即出队"
+      ]
+    },
+    {
+      "name": "DELAY_ZERO",
+      "kernel_name": "sysctl_sched_features[bit DELAY_ZERO]",
+      "path": "/sys/kernel/debug/sched/features/DELAY_ZERO",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "DELAY_DEQUEUE 出队/唤醒时把 lag 裁到 0。配合 DELAY_DEQUEUE 使用。",
+      "increasing": {
+        "good_for": [
+          "裁剪延迟任务 lag 到 0",
+          "防止积累"
+        ],
+        "bad_for": [
+          "可能丢失历史补偿"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "保留 lag"
+        ],
+        "bad_for": [
+          "lag 可能持续积累"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:dequeue_entities",
+        "kernel/sched/fair.c:enqueue_entity"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "延迟任务 lag 积累",
+        "想防止 lag 持续"
+      ],
+      "when_to_decrease": [
+        "想保留 lag 历史",
+        "担心丢失补偿"
+      ]
+    },
+    {
+      "name": "PARANOID_AVG",
+      "kernel_name": "sysctl_sched_features[bit PARANOID_AVG]",
+      "path": "/sys/kernel/debug/sched/features/PARANOID_AVG",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": false,
+      "summary": "启用 avg_vruntime 的偏执模式（更频繁/精确更新）。默认关闭以节省开销。",
+      "increasing": {
+        "good_for": [
+          "提升 avg_vruntime 精确度"
+        ],
+        "bad_for": [
+          "增加更新开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "节省开销"
+        ],
+        "bad_for": [
+          "avg 估计可能滞后"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:avg_vruntime"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "avg_vruntime 不精确",
+        "怀疑 avg 估计滞后"
+      ],
+      "when_to_decrease": [
+        "额外更新开销过高",
+        "性能优先"
+      ]
+    },
+    {
+      "name": "WAKEUP_PREEMPTION",
+      "kernel_name": "sysctl_sched_features[bit WAKEUP_PREEMPTION]",
+      "path": "/sys/kernel/debug/sched/features/WAKEUP_PREEMPTION",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "允许唤醒时抢占当前任务（核心唤醒抢占路径）。关闭则唤醒不直接抢占。",
+      "increasing": {
+        "good_for": [
+          "启用唤醒抢占",
+          "提升唤醒任务响应"
+        ],
+        "bad_for": [
+          "加剧抢占频繁"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "使唤醒不直接抢占"
+        ],
+        "bad_for": [
+          "升高唤醒任务延迟"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:check_preempt_wakeup"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "唤醒任务响应慢",
+        "想允许唤醒抢占"
+      ],
+      "when_to_decrease": [
+        "抢占过于频繁",
+        "想让唤醒不直接抢占"
+      ]
+    },
+    {
+      "name": "HRTICK",
+      "kernel_name": "sysctl_sched_features[bit HRTICK]",
+      "path": "/sys/kernel/debug/sched/features/HRTICK",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "CFS 高精度 tick：用 hrtimer 精确到期切走任务（slice 边界）。依赖 CONFIG_HRTIMER_REARM_DEFERRED。",
+      "increasing": {
+        "good_for": [
+          "启用 hrtimer 精确 slice 边界"
+        ],
+        "bad_for": [
+          "增加 hrtimer 开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 hrtimer 开销"
+        ],
+        "bad_for": [
+          "恶化 slice 超时检测精度"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:hrtick_start_fair"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "slice 边界不精确",
+        "调度公平性差"
+      ],
+      "when_to_decrease": [
+        "hrtimer 开销过高",
+        "想用普通 tick"
+      ]
+    },
+    {
+      "name": "HRTICK_DL",
+      "kernel_name": "sysctl_sched_features[bit HRTICK_DL]",
+      "path": "/sys/kernel/debug/sched/features/HRTICK_DL",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "DEADLINE 类的高精度 tick。依赖 CONFIG_HRTIMER_REARM_DEFERRED。",
+      "increasing": {
+        "good_for": [
+          "启用 DL 高精度 tick"
+        ],
+        "bad_for": [
+          "增加 hrtimer 开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少 hrtimer 开销"
+        ],
+        "bad_for": [
+          "恶化 DL 边界精度"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/deadline.c:hrtick_start_dl"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "DL 任务边界不精确",
+        "DL 调度公平性差"
+      ],
+      "when_to_decrease": [
+        "hrtimer 开销过高"
+      ]
+    },
+    {
+      "name": "NONTASK_CAPACITY",
+      "kernel_name": "sysctl_sched_features[bit NONTASK_CAPACITY]",
+      "path": "/sys/kernel/debug/sched/features/NONTASK_CAPACITY",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "估算 CPU capacity 时扣除非任务占用（如 irq time），使 capacity 反映可用算力。",
+      "increasing": {
+        "good_for": [
+          "扣除非任务占用",
+          "提升 capacity 准确度"
+        ],
+        "bad_for": [
+          "增加估算开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "不扣非任务占用"
+        ],
+        "bad_for": [
+          "capacity 偏高",
+          "选核误判"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:effective_cpu_util"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "capacity 偏高",
+        "非任务占用(irq)未扣"
+      ],
+      "when_to_decrease": [
+        "不想扣非任务占用",
+        "估算开销"
+      ]
+    },
+    {
+      "name": "WARN_DOUBLE_CLOCK",
+      "kernel_name": "sysctl_sched_features[bit WARN_DOUBLE_CLOCK]",
+      "path": "/sys/kernel/debug/sched/features/WARN_DOUBLE_CLOCK",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": false,
+      "summary": "同一 rq->lock 段内多次 update_rq_clock 时打 WARN。默认关闭因注解不完整。",
+      "increasing": {
+        "good_for": [
+          "启用双重 clock WARN",
+          "发现 rq_clock 重复更新 bug"
+        ],
+        "bad_for": [
+          "误报和日志噪声"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "减少误报"
+        ],
+        "bad_for": [
+          "隐藏真实 bug"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:update_rq_clock"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "怀疑 rq_clock 重复更新 bug",
+        "想发现双重 clock"
+      ],
+      "when_to_decrease": [
+        "误报噪声过多",
+        "生产环境"
+      ]
+    },
+    {
+      "name": "RT_PUSH_IPI",
+      "kernel_name": "sysctl_sched_features[bit RT_PUSH_IPI]",
+      "path": "/sys/kernel/debug/sched/features/RT_PUSH_IPI",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": "true (CONFIG_PREEMPT_RT) / false (非 RT)",
+      "summary": "RT 任务迁移用 IPI push 模式：低优先级 CPU 群发抢锁时改由源 CPU 主动 push，减少 rq->lock 抢锁风暴。依赖 HAVE_RT_PUSH_IPI。v7.2 起非 PREEMPT_RT 内核默认关闭。",
+      "increasing": {
+        "good_for": [
+          "启用 IPI push 模式",
+          "减少 rq->lock 抢锁风暴"
+        ],
+        "bad_for": [
+          "增加 IPI 开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "用传统 pull 模式"
+        ],
+        "bad_for": [
+          "多 CPU 抢锁可能风暴"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/rt.c:push_cpu_stop"
+      ],
+      "version_notes": "v7.2: 默认值由无条件 true 改为 CONFIG_PREEMPT_RT 时 true、否则 false（commit dd29c017aed6），避免非 RT 内核长时间禁抢占引发问题。通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "多 CPU 抢 rq->lock 风暴",
+        "RT 迁移 pull 模式锁竞争严重"
+      ],
+      "when_to_decrease": [
+        "IPI 开销过高",
+        "想用传统 pull 模式"
+      ]
+    },
+    {
+      "name": "RT_RUNTIME_SHARE",
+      "kernel_name": "sysctl_sched_features[bit RT_RUNTIME_SHARE]",
+      "path": "/sys/kernel/debug/sched/features/RT_RUNTIME_SHARE",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": false,
+      "summary": "RT 任务跨 CPU 共享 rt_runtime（借调限额）。默认关闭。",
+      "increasing": {
+        "good_for": [
+          "启用跨 CPU 借 rt_runtime",
+          "防 throttling"
+        ],
+        "bad_for": [
+          "引入超额风险"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "严格 per-cpu rt_runtime"
+        ],
+        "bad_for": [
+          "CPU 间限额不均时易 throttling"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/rt.c:sched_rt_runtime_exceeded"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "CPU 间限额不均 RT 易 throttle",
+        "想跨 CPU 借 rt_runtime"
+      ],
+      "when_to_decrease": [
+        "担心超额风险",
+        "想严格 per-cpu 限额"
+      ]
+    },
+    {
+      "name": "LB_MIN",
+      "kernel_name": "sysctl_sched_features[bit LB_MIN]",
+      "path": "/sys/kernel/debug/sched/features/LB_MIN",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": false,
+      "summary": "负载均衡时迁移任务的最小粒度限制（要求迁移负载 >= 单任务最小份额）。默认关闭。",
+      "increasing": {
+        "good_for": [
+          "防止过小迁移",
+          "减少均衡次数"
+        ],
+        "bad_for": [
+          "小负载不均不消解"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "允许小迁移"
+        ],
+        "bad_for": [
+          "增加均衡次数"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_balance_cpus"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "过小迁移过多",
+        "均衡次数过多"
+      ],
+      "when_to_decrease": [
+        "小负载不均不消解",
+        "想允许小迁移"
+      ]
+    },
+    {
+      "name": "ATTACH_AGE_LOAD",
+      "kernel_name": "sysctl_sched_features[bit ATTACH_AGE_LOAD]",
+      "path": "/sys/kernel/debug/sched/features/ATTACH_AGE_LOAD",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "任务 attach 到新 cgroup/rq 时立即老化（age）其负载贡献，避免新 attach 任务瞬时拉满 PELT。",
+      "increasing": {
+        "good_for": [
+          "老化新 attach 任务负载",
+          "防止 PELT 爆冲"
+        ],
+        "bad_for": [
+          "增加 PELT 额外计算"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "不老化保留原负载"
+        ],
+        "bad_for": [
+          "attach 后负载偏冲"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:attach_entity_load_avg"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "新 attach 任务瞬时拉满 PELT",
+        "attach 后负载偏冲"
+      ],
+      "when_to_decrease": [
+        "不想老化保留原负载",
+        "PELT 额外计算开销"
+      ]
+    },
+    {
+      "name": "WA_IDLE",
+      "kernel_name": "sysctl_sched_features[bit WA_IDLE]",
+      "path": "/sys/kernel/debug/sched/features/WA_IDLE",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "wake-affine idle 路径：唤醒选核时倾向选空闲 CPU。",
+      "increasing": {
+        "good_for": [
+          "启用 wake-affine idle 路径",
+          "倾向空闲 CPU"
+        ],
+        "bad_for": [
+          "可能破坏 cache 局部性"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "不优先空闲 CPU"
+        ],
+        "bad_for": [
+          "空闲 CPU 利用不足"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:select_task_rq"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "唤醒选核倾向空闲 CPU 不足",
+        "空闲 CPU 利用低"
+      ],
+      "when_to_decrease": [
+        "空闲 CPU 选核破坏 cache",
+        "想不优先空闲"
+      ]
+    },
+    {
+      "name": "WA_WEIGHT",
+      "kernel_name": "sysctl_sched_features[bit WA_WEIGHT]",
+      "path": "/sys/kernel/debug/sched/features/WA_WEIGHT",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "wake-affine weight 路径：唤醒选核时按 weight 比较源/目标 CPU 负载。",
+      "increasing": {
+        "good_for": [
+          "启用 wake-affine weight 路径",
+          "按负载平衡选核"
+        ],
+        "bad_for": [
+          "增加 weight 计算"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "不按 weight 选核"
+        ],
+        "bad_for": [
+          "选核可能不平衡"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:select_task_rq"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "唤醒选核不平衡",
+        "想按负载选核"
+      ],
+      "when_to_decrease": [
+        "额外 weight 计算开销",
+        "不想按 weight 选"
+      ]
+    },
+    {
+      "name": "WA_BIAS",
+      "kernel_name": "sysctl_sched_features[bit WA_BIAS]",
+      "path": "/sys/kernel/debug/sched/features/WA_BIAS",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "wake-affine 偏置：唤醒选核时偏向源 CPU（保留 cache）。",
+      "increasing": {
+        "good_for": [
+          "启用 wake-affine 偏置",
+          "保留 cache 局部性"
+        ],
+        "bad_for": [
+          "跨 CPU 唤醒变难"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "不偏向源 CPU"
+        ],
+        "bad_for": [
+          "增加 cache miss"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:select_task_rq"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "跨 CPU 唤醒多 cache miss",
+        "想偏向源 CPU"
+      ],
+      "when_to_decrease": [
+        "不想偏向源 CPU",
+        "跨 CPU 唤醒变难"
+      ]
+    },
+    {
+      "name": "UTIL_EST",
+      "kernel_name": "sysctl_sched_features[bit UTIL_EST]",
+      "path": "/sys/kernel/debug/sched/features/UTIL_EST",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "启用 utilization estimation（util_est），用历史峰值估计 task util，提升 EAS 选核准确性。",
+      "increasing": {
+        "good_for": [
+          "启用 util_est",
+          "提升 EAS 选核准确性"
+        ],
+        "bad_for": [
+          "增加 estimation 开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "只用 PELT 即时值"
+        ],
+        "bad_for": [
+          "选核基于滞后负载"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:util_est_dequeue",
+        "kernel/sched/fair.c:util_est_enqueue"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "EAS 选核不准",
+        "util 估计滞后"
+      ],
+      "when_to_decrease": [
+        "estimation 开销过高",
+        "想只用 PELT 即时值"
+      ]
+    },
+    {
+      "name": "LATENCY_WARN",
+      "kernel_name": "sysctl_sched_features[bit LATENCY_WARN]",
+      "path": "/sys/kernel/debug/sched/features/LATENCY_WARN",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": false,
+      "summary": "开启 resched 延迟告警：任务 set_need_resched 后超 latency_warn_ms 仍未调度时打印告警。",
+      "increasing": {
+        "good_for": [
+          "启用 resched 延迟告警"
+        ],
+        "bad_for": [
+          "增加告警噪声"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "关闭告警"
+        ],
+        "bad_for": [
+          "延迟问题不可见"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:resched_latency_warn"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "怀疑调度延迟但无告警",
+        "想发现 resched 延迟问题"
+      ],
+      "when_to_decrease": [
+        "告警噪声过多",
+        "生产环境"
+      ]
+    },
+    {
+      "name": "NI_RANDOM",
+      "kernel_name": "sysctl_sched_features[bit NI_RANDOM]",
+      "path": "/sys/kernel/debug/sched/features/NI_RANDOM",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "newidle 均衡按成功率随机化触发，避免确定性 pattern 引发共振。",
+      "increasing": {
+        "good_for": [
+          "随机化 newidle 均衡触发",
+          "避免共振"
+        ],
+        "bad_for": [
+          "引入少量随机性"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "确定性触发"
+        ],
+        "bad_for": [
+          "多 CPU 同步触发可能共振"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_balance_newidle"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "newidle 均衡确定性 pattern 共振",
+        "多 CPU 同步触发"
+      ],
+      "when_to_decrease": [
+        "想要确定性触发",
+        "不需要随机化"
+      ]
+    },
+    {
+      "name": "NI_RATE",
+      "kernel_name": "sysctl_sched_features[bit NI_RATE]",
+      "path": "/sys/kernel/debug/sched/features/NI_RATE",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "summary": "newidle 均衡按历史成功率比例触发（rate-limited）。",
+      "increasing": {
+        "good_for": [
+          "按成功率限流 newidle 均衡",
+          "减少空转均衡"
+        ],
+        "bad_for": [
+          "稀疏触发可能漏均衡"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "每次 newidle 都均衡"
+        ],
+        "bad_for": [
+          "增加开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_balance_newidle"
+      ],
+      "version_notes": "通过 /sys/kernel/debug/sched/features 写 NAME/NO_NAME 切换；位掩码存于 sysctl_sched_features，jump_label 启用 fast path。features.h 默认值见源码。",
+      "when_to_increase": [
+        "newidle 空转均衡过多",
+        "想按成功率限流"
+      ],
+      "when_to_decrease": [
+        "稀疏触发漏均衡",
+        "想每次 newidle 都均衡"
+      ]
+    },
+    {
+      "name": "sched_schedstats",
+      "kernel_name": "sysctl_schedstats",
+      "path": "/proc/sys/kernel/sched_schedstats",
+      "category": "tunable",
+      "gate": "CONFIG_SCHEDSTATS CONFIG_SYSCTL",
+      "unit": "bool",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "调度统计 schedstats 全局开关。开启后 static_branch sched_schedstats 启用，per-rq/per-domain 统计（lb_count/alb_count/ttwu_* 等）开始累加；force_schedstat_enabled() 可能强制开启。",
+      "increasing": {
+        "good_for": [
+          "启用 per-rq/per-domain 调度统计",
+          "暴露 schedstat"
+        ],
+        "bad_for": [
+          "增加统计写入开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "关闭统计节省开销"
+        ],
+        "bad_for": [
+          "诊断信息消失"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:sysctl_schedstats",
+        "kernel/sched/stats.c:show_schedstat"
+      ],
+      "version_notes": "sysctl 表 .data=NULL，状态由 static_key sched_schedstats 控制，handler 自填 table.data。cmdline schedstats=enable/disable 也可控制。",
+      "when_to_increase": [
+        "需要 /proc/schedstat 详细统计",
+        "诊断负载均衡/唤醒"
+      ],
+      "when_to_decrease": [
+        "统计开销过高",
+        "生产环境不需要"
+      ]
+    },
+    {
+      "name": "sched_util_clamp_max",
+      "kernel_name": "sysctl_sched_uclamp_util_max",
+      "path": "/proc/sys/kernel/sched_util_clamp_max",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL CONFIG_UCLAMP_TASK",
+      "unit": "uclamp (0..SCHED_CAPACITY_SCALE=1024)",
+      "default": 1024,
+      "range": {
+        "min": 0,
+        "max": 1024
+      },
+      "summary": "系统级 uclamp 上限钳位：所有任务 util_max 上界不得超过此值。设为 1024=不限制；降低会压缩高频任务的 util 上界，影响 EAS 选核和提频。",
+      "increasing": {
+        "good_for": [
+          "提升任务 util 上界",
+          "促进提频/选核激进"
+        ],
+        "bad_for": [
+          "高频任务可能占满 CPU"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "限制任务 util 上界",
+          "节省能耗"
+        ],
+        "bad_for": [
+          "任务可能得不到足够算力"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:sysctl_sched_uclamp_handler",
+        "kernel/sched/core.c:uclamp_eff_value"
+      ],
+      "version_notes": "约束 sysctl_sched_uclamp_util_min <= util_max <= 1024 且 util_min_rt_default <= 1024，违反回滚。",
+      "when_to_increase": [
+        "任务可用 util 上界过低",
+        "提频/选核不够激进"
+      ],
+      "when_to_decrease": [
+        "高频任务占满 CPU",
+        "想限制 util 上界省能耗"
+      ]
+    },
+    {
+      "name": "sched_util_clamp_min_rt_default",
+      "kernel_name": "sysctl_sched_uclamp_util_min_rt_default",
+      "path": "/proc/sys/kernel/sched_util_clamp_min_rt_default",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL CONFIG_UCLAMP_TASK",
+      "unit": "uclamp (0..1024)",
+      "default": 1024,
+      "range": {
+        "min": 0,
+        "max": 1024
+      },
+      "summary": "RT 任务 uclamp_min 的默认值。新 fork 的 RT 任务若无显式 uclamp，则 util_min 设为此值（默认 1024=保证 RT 满频运行）。",
+      "increasing": {
+        "good_for": [
+          "提升 RT 任务 uclamp_min 默认",
+          "保证 RT 算力下限"
+        ],
+        "bad_for": [
+          "加剧 RT 任务能耗",
+          "使 RT 任务倾向占用大核"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "降低 RT 任务能耗"
+        ],
+        "bad_for": [
+          "RT 任务可能得不到满频",
+          "低频时 RT 任务响应差"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:sysctl_sched_uclamp_handler",
+        "kernel/sched/core.c:uclamp_rt_active"
+      ],
+      "version_notes": "约束 util_min_rt_default <= 1024。",
+      "when_to_increase": [
+        "RT 任务算力下限不足",
+        "RT 任务跑不到满频"
+      ],
+      "when_to_decrease": [
+        "RT 任务能耗过高",
+        "想降低 RT 算力下限"
+      ]
+    },
+    {
+      "name": "numa_balancing",
+      "kernel_name": "sysctl_numa_balancing",
+      "path": "/proc/sys/kernel/numa_balancing",
+      "category": "tunable",
+      "gate": "CONFIG_NUMA_BALANCING CONFIG_SYSCTL",
+      "unit": "enum: 0=disabled 1=normal 2|=memory_tiering 3=normal|tiering",
+      "default": "由 NUMA_BALANCING_DEFAULT_ENABLED / cmdline numa_balancing= 决定",
+      "range": {
+        "min": 0,
+        "max": 3,
+        "special": {
+          "0": "NUMA_BALANCING_DISABLED",
+          "1": "NUMA_BALANCING_NORMAL",
+          "2": "NUMA_BALANCING_MEMORY_TIERING",
+          "3": "NORMAL|TIERING"
+        }
+      },
+      "summary": "NUMA balancing 总开关与模式位（位掩码）。0=完全关闭，1=正常 NUMA hinting+迁移，2=memory tiering（页提升到 toptier 节点），可组合。开启时 static_branch sched_numa_balancing 启用。",
+      "increasing": {
+        "good_for": [
+          "启用 NUMA 均衡/tiering",
+          "提升跨节点局部性"
+        ],
+        "bad_for": [
+          "加剧 PTE 扫描和迁移开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "关闭 NUMA 均衡节省开销"
+        ],
+        "bad_for": [
+          "跨节点访问不均",
+          "tiering 失效"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:sysctl_numa_balancing",
+        "kernel/sched/fair.c:numa_should_migrate_task"
+      ],
+      "version_notes": "sysctl .data=NULL，handler 用局部 state 调 proc_dointvec_minmax，extra1=ZERO extra2=FOUR（max=4=0b11）。",
+      "when_to_increase": [
+        "跨节点访问不均",
+        "想启用 NUMA 均衡/tiering"
+      ],
+      "when_to_decrease": [
+        "PTE 扫描/迁移开销过大",
+        "想关闭 NUMA 均衡"
+      ]
+    },
+    {
+      "name": "sched_deadline_period_max_us",
+      "kernel_name": "sysctl_sched_dl_period_max",
+      "path": "/proc/sys/kernel/sched_deadline_period_max_us",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "us",
+      "default": 4194304,
+      "range": {
+        "min": "sched_deadline_period_min_us",
+        "max": "1<<22"
+      },
+      "summary": "SCHED_DEADLINE 任务 period 的最大允许值（us），约 4 秒。__schedcheck_deadline_params 校验 period 不超过此值。",
+      "increasing": {
+        "good_for": [
+          "放宽 DL period 上限",
+          "允许更长周期 DL 任务"
+        ],
+        "bad_for": [
+          "使 DL 调度更稀疏"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "收紧 DL period 上限"
+        ],
+        "bad_for": [
+          "长周期 DL 任务被拒"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/deadline.c:sched_dl_period_max",
+        "kernel/sched/deadline.c:__schedcheck_deadline_params"
+      ],
+      "version_notes": "extra1=&sysctl_sched_dl_period_min（互为上下界）。默认 1<<22 us ≈ 4.194s。",
+      "when_to_increase": [
+        "长周期 DL 任务被拒",
+        "想允许更长周期 DL"
+      ],
+      "when_to_decrease": [
+        "想限制 DL 周期上限",
+        "长周期 DL 影响调度"
+      ]
+    },
+    {
+      "name": "sched_deadline_period_min_us",
+      "kernel_name": "sysctl_sched_dl_period_min",
+      "path": "/proc/sys/kernel/sched_deadline_period_min_us",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "us",
+      "default": 100,
+      "range": {
+        "min": 0,
+        "max": "sched_deadline_period_max_us"
+      },
+      "summary": "SCHED_DEADLINE 任务 period 的最小允许值（us），默认 100us。__schedcheck_deadline_params 校验 period 不低于此值。",
+      "increasing": {
+        "good_for": [
+          "收紧 DL period 下限",
+          "保护调度器"
+        ],
+        "bad_for": [
+          "高实时任务被拒"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "放宽 DL period 下限",
+          "允许更短周期 DL"
+        ],
+        "bad_for": [
+          "加剧 DL 调度开销和抖动"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/deadline.c:sched_dl_period_min",
+        "kernel/sched/deadline.c:__schedcheck_deadline_params"
+      ],
+      "version_notes": "extra2=&sysctl_sched_dl_period_max。",
+      "when_to_increase": [
+        "想限制过低周期 DL",
+        "保护调度器"
+      ],
+      "when_to_decrease": [
+        "高实时任务被拒",
+        "想允许更短周期 DL"
+      ]
+    },
+    {
+      "name": "sched_autogroup_enabled",
+      "kernel_name": "sysctl_sched_autogroup_enabled",
+      "path": "/proc/sys/kernel/sched_autogroup_enabled",
+      "category": "tunable",
+      "gate": "CONFIG_SYSCTL",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "autogroup 全局开关。开启时按 session 进程自动分组，使同组进程共享调度带宽避免互相抢占。CONFIG_SCHED_AUTOGROUP 关闭时 sched_autogroup_sysctl_init 强制设 0。",
+      "increasing": {
+        "good_for": [
+          "启用 autogroup",
+          "使同组进程共享带宽"
+        ],
+        "bad_for": [
+          "跨组调度粒度变粗"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "细粒度 per-task 调度"
+        ],
+        "bad_for": [
+          "会话内进程互相抢占"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/autogroup.c:sched_autogroup_sysctls",
+        "kernel/sched/autogroup.c:autogroup_create"
+      ],
+      "version_notes": "extra1=ZERO extra2=ONE。autogroup_init 调 sched_autogroup_sysctl_init 注册。",
+      "when_to_increase": [
+        "同会话进程互相抢占",
+        "交互会话响应差"
+      ],
+      "when_to_decrease": [
+        "跨组调度粒度变粗",
+        "想细粒度 per-task 调度"
+      ]
+    },
+    {
+      "name": "weight.nice",
+      "kernel_name": "cpu_weight_nice_write_s64",
+      "path": "/sys/fs/cgroup/cpu.<name>/weight.nice",
+      "category": "tunable",
+      "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_WEIGHT",
+      "unit": "nice (-20..19)",
+      "default": 0,
+      "range": {
+        "min": -20,
+        "max": 19
+      },
+      "summary": "cgroup cpu 控制器的 nice 别名：写 nice 值，按 sched_prio_to_weight 表换算为 weight（shares）。读时反向查表找最接近的 nice。与 cpu.weight 等价但用 nice 表示。",
+      "increasing": {
+        "good_for": [
+          "降低 nice",
+          "提升该组份额"
+        ],
+        "bad_for": [
+          "其他组份额降低"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升 nice",
+          "限制该组"
+        ],
+        "bad_for": [
+          "组内任务被饿"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:cpu_weight_nice_write_s64",
+        "kernel/sched/core.c:sched_group_set_shares"
+      ],
+      "version_notes": "MIN_NICE=-20, MAX_NICE=19。换算表 sched_prio_to_weight[40]。",
+      "when_to_increase": [
+        "该组想获更多份额",
+        "某组优先级不够"
+      ],
+      "when_to_decrease": [
+        "该组占 CPU 过多",
+        "想限制该组"
+      ]
+    },
+    {
+      "name": "idle",
+      "kernel_name": "cpu_idle_write_s64",
+      "path": "/sys/fs/cgroup/cpu.<name>/idle",
+      "category": "tunable",
+      "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_WEIGHT",
+      "unit": "bool/int",
+      "default": 0,
+      "summary": "cgroup idle 标记：1=该组只在 CPU 空闲时被调度（idle 任务组），0=正常调度。sched_group_set_idle 设置 tg->idle 并影响选核。",
+      "increasing": {
+        "good_for": [
+          "把该组降到 idle 优先级",
+          "只跑空闲 CPU"
+        ],
+        "bad_for": [
+          "该组任务可能长期饥饿"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "恢复正常调度优先级"
+        ],
+        "bad_for": [
+          "失去后台任务隔离"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:cpu_idle_write_s64",
+        "kernel/sched/core.c:sched_group_set_idle"
+      ],
+      "version_notes": "legacy 与 v2 cftype 都有此参数（cpu_legacy_files 与 cpu_files）。",
+      "when_to_increase": [
+        "该组想降到 idle 优先级",
+        "只想跑空闲 CPU"
+      ],
+      "when_to_decrease": [
+        "该组任务长期饥饿",
+        "想恢复正常调度"
+      ]
+    },
+    {
+      "name": "uclamp.min",
+      "kernel_name": "cpu_uclamp_min_write",
+      "path": "/sys/fs/cgroup/cpu.<name>/uclamp.min",
+      "category": "tunable",
+      "gate": "CONFIG_CGROUP_SCHED CONFIG_UCLAMP_TASK_GROUP",
+      "unit": "uclamp percent (0..100, max=不钳位)",
+      "default": "max (1024=SCHED_CAPACITY_SCALE)",
+      "summary": "cgroup 级 uclamp 下限：所有该组任务的 util_min 不得低于此值（钳位）。写 'max' 或 0..100 百分比；不钳位时显示 max。",
+      "increasing": {
+        "good_for": [
+          "提升该组 uclamp.min",
+          "保证最低算力"
+        ],
+        "bad_for": [
+          "加剧能耗"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "降低 uclamp.min 节省能耗"
+        ],
+        "bad_for": [
+          "组内任务可能算力不足"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:cpu_uclamp_write",
+        "kernel/sched/core.c:cpu_util_update_eff"
+      ],
+      "version_notes": "seq_show + write，值由 capacity_from_percent 解析；存于 tg->uclamp_req[UCLAMP_MIN].value。",
+      "when_to_increase": [
+        "该组任务最低算力不足",
+        "组内任务跑在小核"
+      ],
+      "when_to_decrease": [
+        "最低算力约束过紧浪费能耗",
+        "想降低下限"
+      ]
+    },
+    {
+      "name": "uclamp.max",
+      "kernel_name": "cpu_uclamp_max_write",
+      "path": "/sys/fs/cgroup/cpu.<name>/uclamp.max",
+      "category": "tunable",
+      "gate": "CONFIG_CGROUP_SCHED CONFIG_UCLAMP_TASK_GROUP",
+      "unit": "uclamp percent (0..100, max=不钳位)",
+      "default": "max (1024)",
+      "summary": "cgroup 级 uclamp 上限：所有该组任务的 util_max 不得超过此值。写 'max' 表示不设上限。",
+      "increasing": {
+        "good_for": [
+          "提升该组 uclamp.max",
+          "允许更高 util"
+        ],
+        "bad_for": [
+          "加剧能耗"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "限制该组 util 上界",
+          "节省能耗"
+        ],
+        "bad_for": [
+          "任务可能算力不足"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:cpu_uclamp_write",
+        "kernel/sched/core.c:cpu_util_update_eff"
+      ],
+      "version_notes": "存于 tg->uclamp_req[UCLAMP_MAX].value。",
+      "when_to_increase": [
+        "该组任务可用 util 上界过低",
+        "想提频"
+      ],
+      "when_to_decrease": [
+        "该组 util 上界过高",
+        "想限制省能耗"
+      ]
+    },
+    {
+      "name": "sched",
+      "kernel_name": "proc_pid_sched_operations",
+      "path": "/proc/<pid>/sched",
+      "category": "tunable",
+      "gate": "",
+      "unit": "text",
+      "default": "—",
+      "summary": "任务级调度状态显示（vruntime/sum_exec_runtime/nr_switches/schedstat 等）。写任意值触发 proc_sched_set_task：清零该任务的 schedstats 统计（CONFIG_SCHEDSTATS 时）。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,写触发清零统计)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,写触发清零统计)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "kernel/sched/debug.c:proc_sched_show_task",
+        "kernel/sched/debug.c:proc_sched_set_task"
+      ],
+      "version_notes": "读是 seq_file 单次输出。写不解析内容、只触发 stats 清零。",
+      "when_to_increase": [
+        "想清零目标任务 schedstats 统计"
+      ],
+      "when_to_decrease": [
+        "(写入唯一语义是清零统计,无调小方向)"
+      ]
+    },
+    {
+      "name": "autogroup",
+      "kernel_name": "proc_pid_sched_autogroup_operations",
+      "path": "/proc/<pid>/autogroup",
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_AUTOGROUP",
+      "unit": "nice (-20..19)",
+      "default": "0",
+      "range": {
+        "min": -20,
+        "max": 19
+      },
+      "summary": "per-task autogroup nice 设置：写 nice 值设置该任务 autogroup 的 shares（按 sched_prio_to_weight 换算）。读显示 /autogroup-N nice M。",
+      "increasing": {
+        "good_for": [
+          "降低 nice",
+          "提升该 autogroup 份额"
+        ],
+        "bad_for": [
+          "其他 autogroup 份额降低"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升 nice",
+          "限制该 autogroup"
+        ],
+        "bad_for": [
+          "组内任务被饿"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/autogroup.c:proc_sched_autogroup_set_nice",
+        "kernel/sched/autogroup.c:proc_sched_autogroup_show_task"
+      ],
+      "version_notes": "非 CAP_SYS_ADMIN 写入有 10Hz 节流（next=HZ/10+jiffies）。nice<0 需 can_nice。",
+      "when_to_increase": [
+        "该任务 autogroup 想获更多份额"
+      ],
+      "when_to_decrease": [
+        "想限制该任务 autogroup"
+      ]
+    },
+    {
+      "name": "sched_proxy_exec",
+      "kernel_name": "setup_proxy_exec",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_PROXY_EXEC",
+      "unit": "bool (boot-only, =0/=1)",
+      "default": "static_key __sched_proxy_exec 默认 enabled (编译期)",
+      "summary": "cmdline 开关 sched_proxy_exec=：开/关 proxy-exec 调度（CONFIG_SCHED_PROXY_EXEC 编译态静态键 __sched_proxy_exec，默认开）。仅 boot 可设。",
+      "increasing": {
+        "good_for": [
+          "启用 proxy-exec",
+          "允许任务代理执行其他任务"
+        ],
+        "bad_for": [
+          "语义改动大需评估",
+          "仅编译开 CONFIG_SCHED_PROXY_EXEC 有效"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "关闭 proxy-exec 回传统调度"
+        ],
+        "bad_for": [
+          "依赖 proxy-exec 的特性失效"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:setup_proxy_exec",
+        "kernel/sched/core.c:__sched_proxy_exec (DEFINE_STATIC_KEY_TRUE)"
+      ],
+      "version_notes": "CONFIG_SCHED_PROXY_EXEC=n 时 setup 函数体退化为 pr_warn 无效桩，gate 不满足。cmdline 无参数值时 setup 用 str+1 解析（隐含 = 前缀处理）。",
+      "when_to_increase": [
+        "想启用 proxy-exec",
+        "任务需代理执行权"
+      ],
+      "when_to_decrease": [
+        "想关 proxy-exec 回传统调度",
+        "语义改动大需评估"
+      ]
+    },
+    {
+      "name": "schedstats",
+      "kernel_name": "setup_schedstats",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_SCHEDSTATS",
+      "unit": "enum: enable|disable",
+      "default": "由 sysctl_resched... 不，由静态键 sched_schedstats 默认态决定（通常 off，受 CONFIG_SCHEDSTATS 与 profiling 影响）",
+      "summary": "cmdline schedstats=enable/disable：boot 期一次性设 sched 统计静态键 sched_schedstats，与 sysctl kernel.sched_schedstats 同开关。",
+      "increasing": {
+        "good_for": [
+          "启用 per-rq/per-domain 调度统计"
+        ],
+        "bad_for": [
+          "增加统计累加开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "关闭统计节省开销"
+        ],
+        "bad_for": [
+          "schedstat 详细数据消失"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:setup_schedstats",
+        "kernel/sched/stats.c:sched_schedstats (static_key)"
+      ],
+      "version_notes": "非法值打印警告且不改状态。运行期可用 sysctl kernel.sched_schedstats 再改。",
+      "when_to_increase": [
+        "boot 期想启用 schedstats",
+        "需要 /proc/schedstat 详细数据"
+      ],
+      "when_to_decrease": [
+        "boot 期想关闭 schedstats",
+        "省开销"
+      ]
+    },
+    {
+      "name": "resched_latency_warn_ms",
+      "kernel_name": "setup_resched_latency_warn_ms",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_DEBUG",
+      "unit": "ms (>=0)",
+      "default": 0,
+      "range": {
+        "min": 0,
+        "max": "INT_MAX"
+      },
+      "summary": "cmdline resched_latency_warn_ms=<ms>：直接赋 sysctl_resched_latency_warn_ms。>0 时一个 runnable 任务被延迟调度超过该阈值则打印一次 resched_latency_warn 告警（每核节流，10s 窗口最多一次）。0=禁用。",
+      "increasing": {
+        "good_for": [
+          "提升告警阈值",
+          "减少噪声"
+        ],
+        "bad_for": [
+          "掩盖真实延迟问题"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "降低阈值",
+          "更早告警"
+        ],
+        "bad_for": [
+          "增加噪声告警"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:setup_resched_latency_warn_ms",
+        "kernel/sched/core.c:resched_latency_warn_fn"
+      ],
+      "version_notes": "与运行期 sysctl kernel.resched_latency_warn_ms 同一变量，可运行期改。每核节流由 resched_latency_warn_interval (10s) 控制。",
+      "when_to_increase": [
+        "boot 期想设高阈值降噪",
+        "只抓大延迟尖刺"
+      ],
+      "when_to_decrease": [
+        "boot 期想设低阈值更早告警",
+        "怀疑调度延迟"
+      ]
+    },
+    {
+      "name": "rt_group_sched",
+      "kernel_name": "setup_rt_group_sched",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_RT_GROUP_SCHED",
+      "unit": "bool (0|1)",
+      "default": "静态键 rt_group_sched 默认由 CONFIG_RT_GROUP_SCHED 决定",
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "cmdline rt_group_sched=<0|1>：翻转静态键 rt_group_sched。开=启用 RT cgroup 带宽限额（rt_runtime/rt_period_us，挂接全局实时带宽 950ms/1s 限额）；关=RT 任务不受 cgroup 带宽约束。",
+      "increasing": {
+        "good_for": [
+          "启用 RT cgroup 带宽限额",
+          "防 RT 饿死"
+        ],
+        "bad_for": [
+          "RT 任务可能被限流 throttle"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "关闭 RT cgroup 限额",
+          "RT 不受约束"
+        ],
+        "bad_for": [
+          "失控 RT 可能饿死非 RT"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/core.c:setup_rt_group_sched",
+        "kernel/sched/rt.c:rt_bandwidth (rt_runtime/rt_period_us)"
+      ],
+      "version_notes": "非法/越界值（非 0/1）打印警告且不改。CONFIG_RT_GROUP_SCHED=n 时无此键。",
+      "when_to_increase": [
+        "想启用 RT cgroup 带宽限额",
+        "防 RT 饿死其他"
+      ],
+      "when_to_decrease": [
+        "RT 任务不受 cgroup 带宽约束",
+        "想关 RT cgroup 限额"
+      ]
+    },
+    {
+      "name": "noautogroup",
+      "kernel_name": "setup_autogroup",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_AUTOGROUP",
+      "unit": "flag (出现即生效，无参数)",
+      "default": "sysctl_sched_autogroup_enabled 默认 1 (开)",
+      "summary": "cmdline noautogroup：无条件把 sysctl_sched_autogroup_enabled 置 0，关闭 autogroup（每个会话不再自动建独立任务组提升交互响应）。与 sysctl kernel.sched_autogroup_enabled 同变量，可运行期重开。",
+      "increasing": {
+        "good_for": [
+          "(关闭 autogroup,任务归主 cgroup 更可控)"
+        ],
+        "bad_for": [
+          "丢失交互响应优化"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "(重新启用 autogroup,恢复交互响应)"
+        ],
+        "bad_for": [
+          "增加每会话任务组开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/autogroup.c:setup_autogroup",
+        "kernel/sched/autogroup.c:sysctl_sched_autogroup_enabled"
+      ],
+      "version_notes": "setup 函数体无条件置 0（不解析 = 后参数），即 noautogroup 是纯 flag。运行期可用 sysctl kernel.sched_autogroup_enabled 重开。",
+      "when_to_increase": [
+        "(此为关闭操作 noautogroup 出现即关)"
+      ],
+      "when_to_decrease": [
+        "想重新启用 autogroup"
+      ]
+    },
+    {
+      "name": "hlt",
+      "kernel_name": "cpu_idle_nopoll_setup",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_GENERIC_IDLE_POLL_SETUP",
+      "unit": "flag (出现即生效，无参数)",
+      "default": "cpu_idle_force_poll 默认 0 (即默认走 hlt/cpuidle 非 polling)",
+      "summary": "cmdline hlt：把 cpu_idle_force_poll 置 0（关闭强制 polling idle），与 nohlt(置1) 互逆。polling idle 在 idle 时忙等以极低延迟响应唤醒但耗电；hlt 恢复 cpuidle 进入深 C-state 省电、增加唤醒延迟。",
+      "increasing": {
+        "good_for": [
+          "关闭 polling idle",
+          "降低 idle 功耗"
+        ],
+        "bad_for": [
+          "增加唤醒延迟"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "开启 polling idle",
+          "降低唤醒延迟"
+        ],
+        "bad_for": [
+          "加剧 idle 耗电"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/idle.c:cpu_idle_nopoll_setup",
+        "kernel/sched/idle.c:cpu_idle_force_poll"
+      ],
+      "version_notes": "无参数，flag 触发。与 nohlt 互为反操作。CONFIG_GENERIC_IDLE_POLL_SETUP 编译控制。",
+      "when_to_increase": [
+        "idle 耗电过高",
+        "想恢复深 C-state 省电"
+      ],
+      "when_to_decrease": [
+        "空闲唤醒延迟过高",
+        "想 polling idle"
+      ]
+    },
+    {
+      "name": "psi",
+      "kernel_name": "setup_psi",
+      "path": "kernel cmdline",
+      "boot_only": true,
+      "category": "tunable",
+      "gate": "CONFIG_PSI",
+      "unit": "bool",
+      "default": "psi_enable：CONFIG_PSI_DEFAULT_DISABLED=n 时默认 true(开)，=y 时默认 false(关)",
+      "range": {
+        "min": 0,
+        "max": 1
+      },
+      "summary": "cmdline psi=<bool>：设 psi_enable，控制是否收集/暴露 PSI 压力指标 /proc/pressure/{cpu,mem,io}。仅 boot 期生效，运行期不可改（无 sysctl）。",
+      "increasing": {
+        "good_for": [
+          "启用 PSI",
+          "暴露压力指标"
+        ],
+        "bad_for": [
+          "增加 PSI 采集开销"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "关闭 PSI 节省开销"
+        ],
+        "bad_for": [
+          "丢失过载诊断信号"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/psi.c:setup_psi",
+        "kernel/sched/psi.c:psi_enable"
+      ],
+      "version_notes": "CONFIG_PSI_DEFAULT_DISABLED 决定默认态。kstrtobool 解析失败保持默认。运行期无 sysctl 可改（与多数 sched 参数不同）。",
+      "when_to_increase": [
+        "想暴露 PSI 压力指标",
+        "监控过载与排队延迟"
+      ],
+      "when_to_decrease": [
+        "PSI 采集开销过高",
+        "不需要 PSI"
+      ]
+    },
+    {
+      "name": "usage",
+      "kernel_name": "cpuusage_write",
+      "path": "/sys/fs/cgroup/cpuacct.<name>/usage",
+      "category": "tunable",
+      "gate": "",
+      "unit": "ns",
+      "default": 0,
+      "range": {
+        "min": 0
+      },
+      "summary": "cgroup cpuacct 总 CPU 用量(纳秒,user+sys)。写入会重置该 cgroup 所有 CPU 的 usage 计数为给定值,用于清零重新计量。",
+      "increasing": {
+        "good_for": [
+          "(无单调性,写重置计量基准)"
+        ],
+        "bad_for": [
+          "丢失历史用量"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,写重置计量基准)"
+        ],
+        "bad_for": [
+          "丢失历史用量"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/cpuacct.c:cpuusage_write"
+      ],
+      "when_to_increase": [
+        "想重置该 cgroup CPU 计量基准"
+      ],
+      "when_to_decrease": [
+        "想重置该 cgroup CPU 计量基准"
+      ]
+    },
+    {
+      "name": "enabled",
+      "kernel_name": "sched_cache_enable_fops",
+      "path": "/sys/kernel/debug/sched/llc_balancing/enabled",
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_CACHE",
+      "unit": "bool",
+      "default": 1,
+      "range": {
+        "min": 0,
+        "special": {
+          "0": "关闭 cache-aware 调度",
+          "1": "开启 cache-aware 调度"
+        }
+      },
+      "summary": "cache-aware 调度(LLC 均衡)总开关。写 1 开启 sysctl_sched_cache_user,调度器按 LLC 边界做 cache 亲和聚合;0 关闭。v7.2 新增(CONFIG_SCHED_CACHE)。",
+      "increasing": {
+        "good_for": [
+          "提升 cache 局部性",
+          "按 LLC 边界聚合任务"
+        ],
+        "bad_for": [
+          "与传统负载均衡行为冲突"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "回归传统负载均衡行为"
+        ],
+        "bad_for": [
+          "降低 cache 局部性"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/topology.c:sysctl_sched_cache_user"
+      ],
+      "when_to_increase": [
+        "LLC 局部性差",
+        "cache 命中率低"
+      ],
+      "when_to_decrease": [
+        "cache-aware 均衡与传统 LB 冲突",
+        "想用传统负载均衡"
+      ]
+    },
+    {
+      "name": "aggr_tolerance",
+      "kernel_name": "llc_aggr_tolerance",
+      "path": "/sys/kernel/debug/sched/llc_balancing/aggr_tolerance",
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_CACHE",
+      "unit": "ratio",
+      "default": 1,
+      "range": {
+        "min": 0
+      },
+      "summary": "LLC 聚合激进度因子。调度器按 LLC 大小 * aggr_tolerance/256 算聚合目标核数;值大→更激进聚合(更多任务挤同 LLC),值小→更分散。默认1。v7.2 新增。",
+      "increasing": {
+        "good_for": [
+          "提升 LLC 内聚合",
+          "提升 cache 局部性"
+        ],
+        "bad_for": [
+          "加剧单 LLC 拥塞",
+          "加剧 LLC 间负载不均"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "促进 LLC 间负载均衡",
+          "缓解单 LLC 拥塞"
+        ],
+        "bad_for": [
+          "降低 cache 局部性",
+          "增加跨 LLC 漂移"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_cache_aggregate"
+      ],
+      "when_to_increase": [
+        "cache 命中率低",
+        "任务跨 LLC 分散跑局部性差"
+      ],
+      "when_to_decrease": [
+        "某 LLC 过载拥塞",
+        "LLC 间负载严重不均需疏散"
+      ]
+    },
+    {
+      "name": "epoch_period",
+      "kernel_name": "llc_epoch_period",
+      "path": "/sys/kernel/debug/sched/llc_balancing/epoch_period",
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_CACHE",
+      "unit": "jiffies",
+      "default": 10,
+      "range": {
+        "min": 1,
+        "special": {
+          "1": "最小1 jiffie"
+        }
+      },
+      "summary": "cache epoch 周期(jiffies,默认 HZ/100=10ms)。每个 epoch 重新评估任务的 cache 亲和性统计;周期短→更敏感、开销大,周期长→迟钝、开销小。v7.2 新增。",
+      "increasing": {
+        "good_for": [
+          "拉长 cache epoch 周期",
+          "降低评估开销"
+        ],
+        "bad_for": [
+          "减慢对负载变化的响应"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "缩短 epoch 周期",
+          "提升对负载变化的灵敏度"
+        ],
+        "bad_for": [
+          "增加评估开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_cache_epoch_tick"
+      ],
+      "version_notes": "默认 HZ/100(fair.c:#define EPOCH_PERIOD (HZ/100)),典型 HZ=1000 时为 10 jiffies≈10ms;具体值依赖 HZ 配置。",
+      "when_to_increase": [
+        "cache 亲和评估开销过高",
+        "想降低评估频率"
+      ],
+      "when_to_decrease": [
+        "对负载变化迟钝",
+        "亲和统计更新过慢"
+      ]
+    },
+    {
+      "name": "epoch_affinity_timeout",
+      "kernel_name": "llc_epoch_affinity_timeout",
+      "path": "/sys/kernel/debug/sched/llc_balancing/epoch_affinity_timeout",
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_CACHE",
+      "unit": "count",
+      "default": 5,
+      "range": {
+        "min": 0
+      },
+      "summary": "cache 亲和性过期阈值(epoch 数,默认5≈50ms)。任务离开某 LLC 超过该 epoch 数则丢弃其 cache 亲和记录;值大→亲和保留更久,值小→更快忘记。v7.2 新增。",
+      "increasing": {
+        "good_for": [
+          "延长 cache 亲和保留",
+          "惠及回归任务"
+        ],
+        "bad_for": [
+          "保留陈旧亲和记录"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "更快释放陈旧亲和"
+        ],
+        "bad_for": [
+          "回归任务失去 cache 亲和"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_cache_check_affinity"
+      ],
+      "when_to_increase": [
+        "回归任务 cache 亲和丢失",
+        "想保留亲和更久"
+      ],
+      "when_to_decrease": [
+        "陈旧亲和占用资源",
+        "想更快释放"
+      ]
+    },
+    {
+      "name": "overaggr_pct",
+      "kernel_name": "llc_overaggr_pct",
+      "path": "/sys/kernel/debug/sched/llc_balancing/overaggr_pct",
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_CACHE",
+      "unit": "%",
+      "default": 50,
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "summary": "过度聚合阈值百分比(默认50)。当某 LLC 负载超目标聚合量的 overaggr_pct% 时,判定过度聚合,触发向其他 LLC 迁移;值大→容忍过度聚合,值小→更早疏散。v7.2 新增。",
+      "increasing": {
+        "good_for": [
+          "提升对过度聚合的容忍",
+          "减少疏散迁移"
+        ],
+        "bad_for": [
+          "加剧单 LLC 拥塞"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "更早疏散热点 LLC",
+          "缓解拥塞"
+        ],
+        "bad_for": [
+          "增加疏散迁移开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_cache_should_migrate"
+      ],
+      "when_to_increase": [
+        "热点 LLC 过早疏散",
+        "想容忍更多聚合"
+      ],
+      "when_to_decrease": [
+        "某 LLC 过度聚合拥塞",
+        "想更早疏散热点 LLC"
+      ]
+    },
+    {
+      "name": "imb_pct",
+      "kernel_name": "llc_imb_pct",
+      "path": "/sys/kernel/debug/sched/llc_balancing/imb_pct",
+      "category": "tunable",
+      "gate": "CONFIG_SCHED_CACHE",
+      "unit": "%",
+      "default": 20,
+      "range": {
+        "min": 0,
+        "max": 100
+      },
+      "summary": "LLC 不均衡阈值百分比(默认20)。LLC 间负载差超 imb_pct% 才触发 cache-aware 迁移;值大→容忍不均衡(少迁移),值小→更激进均衡。v7.2 新增。",
+      "increasing": {
+        "good_for": [
+          "提升 LLC 不均衡容忍",
+          "减少迁移开销"
+        ],
+        "bad_for": [
+          "加剧 LLC 间负载不均"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "提升 LLC 均衡激进性"
+        ],
+        "bad_for": [
+          "增加迁移开销"
+        ]
+      },
+      "consumes": [
+        "kernel/sched/fair.c:sched_cache_should_migrate"
+      ],
+      "when_to_increase": [
+        "LLC 间均衡过频",
+        "迁移开销过大"
+      ],
+      "when_to_decrease": [
+        "LLC 间负载不均",
+        "想更激进均衡"
+      ]
+    }
+  ]
+}

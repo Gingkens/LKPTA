@@ -1,0 +1,57 @@
+{
+  "module": "irq",
+  "version": "v7.2-rc7",
+  "_doc": "irq 模块只读观测项。全部 per_irq（path 含 <irqN> 占位符）。权限 0444（proc_create_single_data 第三参 0444）。消费者做诊断时先读这些定位问题在哪——smp_affinity 写的请求掩码 vs effective_affinity 实际生效的掩码之差是关键诊断信号。spurious 是判断中断是否失控被禁的核心。node 配 smp_affinity 判 NUMA 局部性。affinity_hint 看驱动给的建议。",
+  "items": [
+    {
+      "name": "affinity_hint",
+      "kernel_name": "irq_affinity_hint_proc_show",
+      "path": "/proc/irq/<irqN>/affinity_hint",
+      "category": "readonly",
+      "gate": "CONFIG_SMP",
+      "per_irq": true,
+      "summary": "per-irq 内核给用户态的亲和性建议掩码（位图格式）。desc->affinity_hint 是 const cpumask 指针，由驱动/子系统经 irq_apply_affinity_hint() 设置（典型如多队列网卡驱动给每队列建议掩码）。读时 zalloc 临时掩码，若 desc->affinity_hint 非空则 copy 后打印，空则打印全 0。",
+      "use": "读值=驱动建议的亲和性掩码。与 smp_affinity 当前实际设置对比：若用户态未按建议设，可考虑采纳建议以获得驱动预期的局部性（如网卡队列与 CPU 核对应）。affinity_hint 全 0 说明驱动未设建议，不能作为参考。改 smp_affinity 时若 hint 非空应优先考虑 hint 范围内的核。注意：hint 是建议非约束，内核不强制按 hint 投递。"
+    },
+    {
+      "name": "node",
+      "kernel_name": "irq_node_proc_show",
+      "path": "/proc/irq/<irqN>/node",
+      "category": "readonly",
+      "gate": "CONFIG_SMP",
+      "per_irq": true,
+      "summary": "per-irq 中断描述符所在 NUMA 节点号。读 irq_desc_get_node(desc) → irq_common_data_get_node → desc->irq_common_data.node（CONFIG_NUMA 开时有效，否则恒 0）。node 在 desc_smp_init 时由 alloc_masks/alloc_irq_desc 申请描述符的 node 决定，反映描述符数据结构所在节点，不一定等于中断硬件所在 node。",
+      "use": "读值=描述符 NUMA 节点。配 smp_affinity 判断中断局部性：若 smp_affinity 设的核不在此 node 上，中断处理会跨节点访问描述符/数据。理想是把中断亲和性设到 node 内的核。注意：node 反映描述符分配节点，硬件/驱动可能在中断实际来源 node 之外分配描述符——判硬件局部性应结合 affinity_hint 与 effective_affinity。CONFIG_NUMA 关时恒 0。"
+    },
+    {
+      "name": "effective_affinity",
+      "kernel_name": "irq_effective_aff_proc_show",
+      "path": "/proc/irq/<irqN>/effective_affinity",
+      "category": "readonly",
+      "gate": "CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK CONFIG_SMP",
+      "per_irq": true,
+      "summary": "per-irq 实际生效的中断投递 CPU 掩码（位图格式）。读 irq_data_get_effective_affinity_mask(&desc->irq_data)。effective_affinity 是中断真正投递的 CPU 集合，可能比 smp_affinity 窄——受 irq_chip 是否实现 irq_set_affinity、CPU 在线状态、managed-IRQ 约束等限制，内核在 irq_set_affinity 路径 irq_data_update_effective_affinity 更新。",
+      "use": "读值=中断当前真正投递的 CPU 掩码。与 smp_affinity 对比：effective ⊂ smp_affinity 是正常（受限缩窄），若 effective 比 smp_affinity 窄很多说明芯片/约束未采纳用户请求——写 smp_affinity 后读 effective 验证是否生效。若 effective 恒定单核而 smp_affinity 设了多核，说明该中断无法真正多核分发（如某些 PIC 只能投递单核）。诊断 '改了 smp_affinity 没效果' 时必读此文件。"
+    },
+    {
+      "name": "effective_affinity_list",
+      "kernel_name": "irq_effective_aff_list_proc_show",
+      "path": "/proc/irq/<irqN>/effective_affinity_list",
+      "category": "readonly",
+      "gate": "CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK CONFIG_SMP",
+      "per_irq": true,
+      "summary": "per-irq 实际生效的中断投递 CPU 列表（逗号分隔格式）。与 effective_affinity 是同一掩码的不同表示（show_irq_affinity(EFFECTIVE_LIST) 用 %*pbl 打印 cpulist）。读 effective_affinity_mask 同源。",
+      "use": "读值=中断实际投递的 CPU 列表（更易读格式）。用途同 effective_affinity：验证 smp_affinity 写入是否真正生效、判断中断是否被限制到单核/子集。脚本里 cpulist 比 bitmap 易解析。CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK 关则此文件与 effective_affinity 均不存在（proc_create 在 #ifdef 内）。"
+    },
+    {
+      "name": "spurious",
+      "kernel_name": "irq_spurious_proc_show",
+      "path": "/proc/irq/<irqN>/spurious",
+      "category": "readonly",
+      "gate": "",
+      "per_irq": true,
+      "summary": "per-irq spurious（伪中断/未处理中断）统计：count（irq_count 累积，到 100000 重置）、unhandled（irqs_unhandled 当前未处理计数）、last_unhandled（上次未处理中断时间距今的 ms 数）。读 desc->irq_count/irqs_unhandled/last_unhandled。这些字段在 note_interrupt 路径累积：handler 返回 IRQ_NONE 时 irqs_unhandled++，累积到 100000 时若 unhandled>99900 触发 pr_emerg + irq_disable + IRQS_SPURIOUS_DISABLED。",
+      "use": "读值=该中断的未处理统计。判读：count 高 + unhandled 高 → 该中断大量无人处理（驱动未注册/坏硬件/错路由），可能已被或将被 spurious 检测自动禁用。count=100000 重置后看 unhandled 是否仍高决定是否禁。last_unhandled ms 越小 → 仍在频繁出现未处理中断；越大 → 历史问题已停。诊断 '中断被禁系统卡死' 时读此文件看是否 IRQS_SPURIOUS_DISABLED 路径触发。noirqdebug 设了则 note_interrupt 不累积，此文件 count/unhandled 停在 0。配合 /proc/interrupts 看该中断实际计数是否还在涨。"
+    }
+  ]
+}

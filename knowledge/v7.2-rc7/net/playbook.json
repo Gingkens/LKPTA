@@ -1,0 +1,844 @@
+{
+  "module": "net",
+  "version": "v7.2-rc7",
+  "_doc": "net 流程层。把 net 当网络协议栈收发与协议调优专家。三种模式由消费者 agent 选择如何用：intelligent(靠 capabilities 自由推理) / rule(固定 if-then 匹配) / hybrid(规则优先、无命中转智能)。query.py --mode 只决定展示哪部分原料，真正推理是消费者 LLM 自己的行为。所有 lever/observe 引用都用 kernel_name 或 path 锚定现有 tunable/readonly，不复制参数详情(避免冗余+版本漂移)。阈值是经验值非源码硬约束。",
+  "modes": {
+    "intelligent": {
+      "description": "把 net 当专家。消费者靠 capabilities + observation_map + thresholds + leverage_map 推理下一步读什么、判什么、动哪个参数。LLM 自主决策，playbook 只提供专家方法论与映射，不写死步骤。",
+      "how_to_use": "消费者拿到 profiling 描述后：(1) 读 capabilities 的 when_applies 判断属哪类问题（收发拥塞？TCP 内存？busy poll？cgroup 分流？）；(2) 用 observation_map 找该读的 readonly（主要是 /proc/net/softnet_stat）；(3) 读值后用 thresholds 判异常；(4) 用 leverage_map 映射到候选 tunable 族；(5) 取 tunable(用 query.py --name <kernel_name>) 的 increasing/decreasing 决定调向。允许推理跳出 playbook——如 profiling 指向非 net 问题（调度/内存/IRQ）时建议转模块。"
+    },
+    "rule": {
+      "description": "固定 if-then 规则驱动。消费者按 rules 逐条匹配 trigger(symptom/keywords)，命中则按 steps 顺序执行 read→judge→recommend。不靠 LLM 推理，可复现、可审计。",
+      "how_to_use": "消费者描述 profiling 后，遍历 rules：trigger 命中即按 steps 执行。无命中则报告'无规则匹配，建议转 intelligent 模式'。规则命中的结论可附 fallback_to_capability 指回 capabilities 做补充。"
+    },
+    "hybrid": {
+      "description": "规则先尝试，命中则用规则结论但附智能推理的补充建议；规则无命中则转 intelligent 模式自由推理。兼顾可复现与覆盖度。",
+      "how_to_use": "先跑 rule 模式；有命中→输出规则结论 + 用 capabilities 补充'规则可能漏的角度'；无命中→转 intelligent 模式。"
+    }
+  },
+  "capabilities": [
+    {
+      "id": "buffer-queue-depth",
+      "name": "收发缓冲与队列深度诊断",
+      "when_applies": "profiling 显示 softnet_stat dropped 高、time_squeeze 频繁、NAPI 软中断占用久、TX qdisc 队列堆积、单 skb/defer 优化相关性能问题。",
+      "reasoning": "先读 /proc/net/softnet_stat per-CPU 看是 dropped 还是 time_squeeze 主导。dropped 高→Per-CPU backlog 满（netdev_max_backlog 太低或 NAPI 跟不上）；time_squeeze 高→NAPI 因预算（netdev_budget/netdev_budget_usecs）退出而非空。区分收发：dev_weight_rx_bias/tx_bias 影响 rx/tx 配额比，dev_weight 是基准。TX 看 qdisc_max_burst 出队批量。defer 与 GRO：skb_defer_max=0 会 static_branch 关闭整套 defer 优化（不是数值调小）；gro_normal_batch 平衡 GRO 吞吐与延迟。max_skb_frags 影响 TSO/GSO 聚合度。netdev_tstamp_prequeue 决定时间戳精度。",
+      "observe": [
+        "softnet_seq_ops",
+        "netdev_rss_key"
+      ],
+      "candidate_levers": [
+        "net_hotdata.max_backlog",
+        "weight_p",
+        "dev_weight_rx_bias",
+        "dev_weight_tx_bias",
+        "net_hotdata.netdev_budget",
+        "net_hotdata.netdev_budget_usecs",
+        "net_hotdata.qdisc_max_burst",
+        "net_hotdata.gro_normal_batch",
+        "net_hotdata.sysctl_skb_defer_max",
+        "net_hotdata.sysctl_max_skb_frags",
+        "net_hotdata.tstamp_prequeue"
+      ]
+    },
+    {
+      "id": "tcp-tuning",
+      "name": "TCP 内存与孤儿诊断",
+      "when_applies": "profiling 显示大量 TCP 连接、tcp mem pressure 频繁触发、orphan socket 数超限被强制 RST、FIB trie 节点释放阻塞。",
+      "reasoning": "TCP 内存配额分三段：tcp_mem[0]=min（开始计数）、[1]=pressure（开始限制新分配）、[2]=max（硬上限）。默认按 nr_free_buffer_pages/16 自动初始化，不同内存机器默认不同——别照抄。orphan 是已关闭 fd 但内核仍持有的 socket，tcp_max_orphans 超限会强制杀 orphan。inet_peer 三件套（threshold/minttl/maxttl）影响 per-peer 信息缓存。fib_sync_mem 控制 FIB trie 同步释放阈值（达到后同步释放而非 RCU 延后），改大减少 RCU 积压但加剧单次阻塞。tcp_low_latency 已废弃（obsolete），改无效。注意 TCP 拥塞控制/重传/窗口等参数不在本模块工单（工单只覆盖 ipv4_table 中 tcp_mem/tcp_max_orphans/tcp_low_latency 等少数项），完整 TCP 调优需结合 ip_route/拥塞控制等更细参数。",
+      "observe": [
+        "softnet_seq_ops"
+      ],
+      "candidate_levers": [
+        "sysctl_tcp_mem",
+        "sysctl_tcp_max_orphans",
+        "inet_peer_threshold",
+        "inet_peer_minttl",
+        "inet_peer_maxttl",
+        "sysctl_fib_sync_mem",
+        "sysctl_tcp_low_latency"
+      ]
+    },
+    {
+      "id": "udp-and-fib-mem",
+      "name": "UDP 内存与 FIB 同步释放诊断",
+      "when_applies": "profiling 显示高 UDP 流量、udp_mem pressure 频发、FIB trie 节点释放阻塞影响路由更新。",
+      "reasoning": "udp_mem 三值配额同 tcp_mem 模式（min/pressure/max，按 nr_free_buffer_pages/16 自动初始化）。fib_sync_mem 默认 512KB，达到后同步释放 tnode 而非 RCU 延后——改大减少 RCU 释放积压但加剧单次阻塞，改小缩短阻塞但增加 RCU 释放积压峰值。",
+      "observe": [
+        "softnet_seq_ops"
+      ],
+      "candidate_levers": [
+        "sysctl_udp_mem",
+        "sysctl_fib_sync_mem"
+      ]
+    },
+    {
+      "id": "napi-busy-poll",
+      "name": "NAPI busy poll 与低延迟诊断",
+      "when_applies": "profiling 显示 socket 阻塞读延迟高、应用 select/poll 期间软中断唤醒开销大、CPU 富余想用 busy poll 换延迟。需 CONFIG_NET_RX_BUSY_POLL。",
+      "reasoning": "busy_poll 是 socket 全局默认 busy poll 时长（select/poll/epoll 阻塞期间轮询网卡），busy_read 是 per-socket sk_ll_usec 默认（阻塞读时轮询）。两者默认 0=禁用。>0 时降低延迟但加剧 CPU 占用与电量。配合 RPS/RFS（rps_sock_flow_entries）做软中断跨 CPU 流分发。注意：busy poll 与 RPS 是软中断层优化，硬中断 IRQ 亲和性路由不在此（转 irq 模块）。",
+      "observe": [
+        "softnet_seq_ops"
+      ],
+      "candidate_levers": [
+        "sysctl_net_busy_poll",
+        "sysctl_net_busy_read",
+        "rps_sock_flow_sysctl"
+      ]
+    },
+    {
+      "id": "rps-flow-limit",
+      "name": "RPS/RFS 与 flow limit 诊断",
+      "when_applies": "profiling 显示跨 CPU 收包不均、单流 PPS 暴增拖慢 softirq、softnet_stat received_rps 或 flow_limit_count 异常。需 CONFIG_RPS 和/或 CONFIG_NET_FLOW_LIMIT。",
+      "reasoning": "RPS/RFS 把收包软中断跨 CPU 分发：rps_sock_flow_entries 是全局 socket flow table 槽数（向上取整到 2 的幂，封顶 1<<29），0=禁用 RFS。flow_limit 按 CPU 位图启用单流限速：flow_limit_cpu_bitmap 是 cpumask，flow_limit_table_len 是 per-CPU 哈希桶数（必须 2 的幂）。softnet_stat 第 10 列 received_rps 高=RPS 在工作，第 11 列 flow_limit_count 高=flow limit 触发。RSS 密钥（netdev_rss_key readonly）影响硬件层 flow→queue 映射，与 RPS 互补。",
+      "observe": [
+        "softnet_seq_ops",
+        "netdev_rss_key"
+      ],
+      "candidate_levers": [
+        "rps_sock_flow_sysctl",
+        "flow_limit_cpu_sysctl",
+        "netdev_flow_limit_table_len"
+      ]
+    },
+    {
+      "id": "bpf-jit-security",
+      "name": "BPF JIT 安全与性能诊断",
+      "when_applies": "profiling 显示 BPF 程序性能不足或安全策略需调整、JIT 镜像内存不足导致 BPF 加载失败、需审计 JIT 暴露面。需 CONFIG_BPF_JIT。",
+      "reasoning": "BPF JIT 四件套：bpf_jit_enable（0/1/2，2 是调试用勿生产）、bpf_jit_harden（0/1/2 常量盲化+指针混淆）、bpf_jit_kallsyms（JIT 符号是否进 /proc/kallsyms）、bpf_jit_limit（JIT 可执行内存上限）。CONFIG_BPF_JIT_ALWAYS_ON 时 enable 永久锁定 1。写都需 CAP_SYS_ADMIN。性能敏感场景开 enable 关 harden；多租户/不信任场景开 harden 关 kallsyms。",
+      "observe": [],
+      "candidate_levers": [
+        "bpf_jit_enable",
+        "bpf_jit_harden",
+        "bpf_jit_kallsyms",
+        "bpf_jit_limit"
+      ]
+    },
+    {
+      "id": "ipv6-options-flowlabel",
+      "name": "IPv6 选项/flow label/multipath 诊断",
+      "when_applies": "profiling 显示 IPv6 包被丢弃（HBH/DST 选项超限）、flow label 缺失影响负载分担、ECMP hash 流分布不均、IPv6 瞬时地址冲突。",
+      "reasoning": "IPv6 选项上限四件套：max_dst_opts_number/max_hbh_opts_number（默认 8）、max_dst_opts_length/max_hbh_length（默认 INT_MAX=不限）。flow label 策略：auto_flowlabels（0/1/2/3 默认 OPTOUT=1）控制自动打 flow label；flowlabel_reflect 位图（0~7）控制哪些场景反射入向 flow label；flowlabel_consistency 默认 1 严格校验；flowlabel_state_ranges 默认 0 不按状态范围。ECMP：fib_multipath_hash_policy（0=L3/1=L4/2=flowinfo/3=字段位图）+fib_multipath_hash_fields（仅 policy=3 生效，bit 见 FIB_MULTIPATH_HASH_FIELD_*）。seg6_flowlabel 控制 SR 包 flow label。ioam6_id/ioam6_id_wide 是节点 ID（默认未配置）。瞬时地址：idgen_retries/idgen_delay 控制冲突重试。",
+      "observe": [],
+      "candidate_levers": [
+        "init_net.ipv6.sysctl.max_dst_opts_cnt",
+        "init_net.ipv6.sysctl.max_hbh_opts_cnt",
+        "init_net.ipv6.sysctl.max_dst_opts_len",
+        "init_net.ipv6.sysctl.max_hbh_opts_len",
+        "init_net.ipv6.sysctl.auto_flowlabels",
+        "init_net.ipv6.sysctl.flowlabel_reflect",
+        "init_net.ipv6.sysctl.flowlabel_consistency",
+        "init_net.ipv6.sysctl.flowlabel_state_ranges",
+        "init_net.ipv6.sysctl.multipath_hash_policy",
+        "init_net.ipv6.sysctl.multipath_hash_fields",
+        "init_net.ipv6.sysctl.seg6_flowlabel",
+        "init_net.ipv6.sysctl.ioam6_id",
+        "init_net.ipv6.sysctl.ioam6_id_wide",
+        "init_net.ipv6.sysctl.idgen_retries",
+        "init_net.ipv6.sysctl.idgen_delay",
+        "init_net.ipv6.sysctl.bindv6only",
+        "init_net.ipv6.sysctl.ip_nonlocal_bind",
+        "init_net.ipv6.sysctl.fwmark_reflect",
+        "init_net.ipv6.sysctl.anycast_src_echo_reply",
+        "init_net.ipv6.sysctl.fib_notify_on_flag_change"
+      ]
+    },
+    {
+      "id": "cgroup-net-classification",
+      "name": "cgroup net_cls 流分类诊断",
+      "when_applies": "profiling 显示希望按 cgroup 把 socket 流量划到不同 tc class、或 net_cls classid 配置不当导致 tc 分类失效。需 CONFIG_CGROUP_NET_CLASSID。",
+      "reasoning": "net_cls cgroup 通过 classid（u32）把组内所有任务的 socket 打上 cgroup classid 标记，tc 用 cls_cgroup 过滤器据此分流。写 classid 会 iterate_fd 批量更新已建 socket（每 1000 fd 释放一次 task_lock），大 fd 表写有可见开销。新建 socket 自动继承当前 cgroup 的 classid。",
+      "observe": [],
+      "candidate_levers": [
+        "write_classid"
+      ]
+    },
+    {
+      "id": "netns-and-runtime-misc",
+      "name": "netns 行为与运行时杂项诊断",
+      "when_applies": "profiling 显示容器/子 netns 的 fallback tunnel 行为不当、devconf 继承策略问题、网卡注销超时、告警限速不当、高阶分配问题。",
+      "reasoning": "fb_tunnels_only_for_init_net 控制 fallback tunnel 创建策略（0=每个 netns 建/1=仅 init_net/2=都不建）；devconf_inherit_init_net 是 4 值枚举控制新 netns 的 IPv4/IPv6 devconf 继承/重置。netdev_unregister_timeout_secs 控制网卡注销等待（默认 10s，超时强制释放）。message_cost/message_burst 控制网络告警限速（默认 5s/10 条）。high_order_alloc_disable 是 static_key，1=禁用 compound page（大页）优化。netdev_tstamp_prequeue 控制时间戳精度。warnings 已废弃。",
+      "observe": [],
+      "candidate_levers": [
+        "sysctl_fb_tunnels_only_for_init_net",
+        "sysctl_devconf_inherit_init_net",
+        "netdev_unregister_timeout_secs",
+        "net_ratelimit_state.interval",
+        "net_ratelimit_state.burst",
+        "net_high_order_alloc_disable_key.key",
+        "net_hotdata.tstamp_prequeue",
+        "net_msg_warn",
+        "set_default_qdisc",
+        "net_hotdata.sysctl_mem_pcpu_rsv"
+      ]
+    },
+    {
+      "id": "boot-cmdline-sizing",
+      "name": "boot 时网络哈希表与策略诊断",
+      "when_applies": "profiling 显示 TCP/UDP/tcp_metrics 哈希表冲突率高（大量连接）、boot 时 fb_tunnels fallback 策略需调、ipconfig 载波等待超时。这些参数 boot-only，改需 reboot。",
+      "reasoning": "四个 boot-only cmdline：thash_entries（TCP ehash/bhash/bind2 表槽数，缺省按内存自动决定，ehash 默认每 2MB 一槽）、uhash_entries（UDP 表槽数，低于 UDP_HTABLE_SIZE_MIN 会被抬升）、tcpmhash_entries（tcp_metrics 表槽数，>=128K 页=16384 否则 8192）、fb_tunnels（initns=仅 init_net 建/none=都不建，与 sysctl_fb_tunnels_only_for_init_net 同变量）、carrier_timeout（ipconfig 等待载波 up 秒数，默认 120）。改这些需改 grub 后 reboot。",
+      "observe": [],
+      "candidate_levers": [
+        "set_thash_entries",
+        "set_uhash_entries",
+        "set_tcpmhash_entries",
+        "fb_tunnels_only_for_init_net_sysctl_setup",
+        "set_carrier_timeout"
+      ]
+    },
+    {
+      "id": "cipso-netlabel",
+      "name": "CIPSO/NetLabel 诊断",
+      "when_applies": "profiling 显示 CIPSO 标签处理开销高、标签校验/缓存问题、CONFIG_NETLABEL 启用环境。",
+      "reasoning": "CIPSO 四件套：cipso_cache_enable（默认 1）控制标签命中缓存；cipso_cache_bucket_size（默认 10）控制每桶条目；cipso_rbm_optfmt（默认 0）控制发送时合并选项格式；cipso_rbm_strictvalid（默认 1）控制接收严格校验。性能敏感开 cache，安全敏感开 strictvalid。",
+      "observe": [],
+      "candidate_levers": [
+        "cipso_v4_cache_enabled",
+        "cipso_v4_cache_bucketsize",
+        "cipso_v4_rbm_optfmt",
+        "cipso_v4_rbm_strictvalid"
+      ]
+    }
+  ],
+  "observation_map": {
+    "_doc": "症状信号 → 该读的 readonly(path/kernel_name/字段)。让消费者知道'看到 X 该查 Y'。智能模式当推理依据，规则模式当 read 目标。每条结构：path=readonly 路径(占位符保留), fields=该路径里要读的字段, read=对应 readonly 的 kernel_name, meaning=该信号揭示什么。tunable 的'当前值'不在此(非 readonly),配置态观察见 capabilities.reasoning。",
+    "softnet_drops_high": {
+      "path": "/proc/net/softnet_stat",
+      "fields": [
+        "processed",
+        "dropped",
+        "cpu_id"
+      ],
+      "read": "softnet_seq_ops",
+      "meaning": "第 2 列 dropped > 0 = Per-CPU backlog 满（netdev_max_backlog 过低或 NAPI 跟不上）。指向 buffer-queue-depth。"
+    },
+    "softnet_time_squeeze_high": {
+      "path": "/proc/net/softnet_stat",
+      "fields": [
+        "processed",
+        "time_squeeze",
+        "cpu_id"
+      ],
+      "read": "softnet_seq_ops",
+      "meaning": "第 3 列 time_squeeze > 0 = NAPI 因预算（netdev_budget/netdev_budget_usecs）退出而非空。指向 buffer-queue-depth。"
+    },
+    "softnet_rps_flow_limit": {
+      "path": "/proc/net/softnet_stat",
+      "fields": [
+        "received_rps",
+        "flow_limit_count",
+        "cpu_id"
+      ],
+      "read": "softnet_seq_ops",
+      "meaning": "第 10 列 received_rps 高 = RPS 在工作（其他 CPU 帮忙处理）；第 11 列 flow_limit_count > 0 = 单流暴增被限。指向 rps-flow-limit。"
+    },
+    "softnet_backlog_depth": {
+      "path": "/proc/net/softnet_stat",
+      "fields": [
+        "input_qlen+process_qlen",
+        "input_qlen",
+        "process_qlen",
+        "cpu_id"
+      ],
+      "read": "softnet_seq_ops",
+      "meaning": "第 14/15 列 input_qlen/process_qlen 揭示 backlog 当前深度。深度接近 netdev_max_backlog → 即将 drop。指向 buffer-queue-depth。"
+    },
+    "rss_key_check": {
+      "path": "/proc/sys/net/core/netdev_rss_key",
+      "fields": [
+        "hex 串"
+      ],
+      "read": "netdev_rss_key",
+      "meaning": "RSS 密钥 hex 串。用于核对 RSS 是否随机化、配合 ethtool -x 计算 flow→queue 映射。指向 rps-flow-limit（与 RPS 互补）。"
+    },
+    "tcp_ulp_missing": {
+      "path": "/proc/sys/net/ipv4/tcp_available_ulp",
+      "fields": [
+        "ULP 名称列表"
+      ],
+      "read": "proc_tcp_available_ulp",
+      "meaning": "可用 TCP ULP 列表。setsockopt(TCP_ULP) 失败时核对名称是否在此。确认 mptcp 是否注册可用。"
+    }
+  },
+  "thresholds": {
+    "_doc": "判据规则：readonly 值落在什么范围算异常。给智能模式当推理依据，给规则模式当 judge 条件。阈值是经验值不是源码硬约束，现场可调，别当铁律。",
+    "softnet_drop_per_cpu": {
+      "desc": "/proc/net/softnet_stat 某行第 2 列 dropped",
+      "warn_if_gt": 0,
+      "meaning": "任一 CPU 出现 drop = Per-CPU backlog 曾满（netdev_max_backlog 过低或 NAPI 跟不上）"
+    },
+    "softnet_time_squeeze_ratio": {
+      "desc": "sum(time_squeeze) / sum(processed) per CPU",
+      "warn_if_gt": 0.1,
+      "meaning": "time_squeeze 占比 > 10% → NAPI 因预算退出而非空（netdev_budget/netdev_budget_usecs 过低或 dev_weight 不够）"
+    },
+    "softnet_drop_to_processed_ratio": {
+      "desc": "sum(dropped) / sum(processed) per CPU",
+      "warn_if_gt": 0.001,
+      "meaning": "drop 率 > 0.1% → backlog 拥塞，应先调 dev_weight/netdev_budget 再考虑 max_backlog"
+    },
+    "softnet_flow_limit_count": {
+      "desc": "/proc/net/softnet_stat 某行第 11 列 flow_limit_count",
+      "warn_if_gt": 0,
+      "meaning": "flow limit 曾触发 = 单流 PPS 暴增被限（检查 flow_limit_cpu_bitmap 是否如预期）"
+    },
+    "softnet_received_rps_zero": {
+      "desc": "/proc/net/softnet_stat 某行第 10 列 received_rps",
+      "warn_if_gt": -1,
+      "meaning": "received_rps == 0 而 CPU 不均 → RPS 未启用（rps_sock_flow_entries=0）；> 0 且高 = RPS 在工作"
+    }
+  },
+  "leverage_map": {
+    "_doc": "症状类别 → 候选 tunable 族(kernel_name 引用，不复制参数详情)。消费者拿 kernel_name 去 query.py --name 取 increasing/decreasing 决定调向。",
+    "buffer-queue-depth": [
+      "net_hotdata.max_backlog",
+      "weight_p",
+      "dev_weight_rx_bias",
+      "dev_weight_tx_bias",
+      "net_hotdata.netdev_budget",
+      "net_hotdata.netdev_budget_usecs",
+      "net_hotdata.qdisc_max_burst",
+      "net_hotdata.gro_normal_batch",
+      "net_hotdata.sysctl_skb_defer_max",
+      "net_hotdata.sysctl_max_skb_frags",
+      "net_hotdata.tstamp_prequeue"
+    ],
+    "tcp-tuning": [
+      "sysctl_tcp_mem",
+      "sysctl_tcp_max_orphans",
+      "inet_peer_threshold",
+      "inet_peer_minttl",
+      "inet_peer_maxttl",
+      "sysctl_fib_sync_mem",
+      "sysctl_tcp_low_latency"
+    ],
+    "udp-and-fib-mem": [
+      "sysctl_udp_mem",
+      "sysctl_fib_sync_mem"
+    ],
+    "napi-busy-poll": [
+      "sysctl_net_busy_poll",
+      "sysctl_net_busy_read",
+      "rps_sock_flow_sysctl"
+    ],
+    "rps-flow-limit": [
+      "rps_sock_flow_sysctl",
+      "flow_limit_cpu_sysctl",
+      "netdev_flow_limit_table_len"
+    ],
+    "bpf-jit-security": [
+      "bpf_jit_enable",
+      "bpf_jit_harden",
+      "bpf_jit_kallsyms",
+      "bpf_jit_limit"
+    ],
+    "ipv6-options-flowlabel": [
+      "init_net.ipv6.sysctl.max_dst_opts_cnt",
+      "init_net.ipv6.sysctl.max_hbh_opts_cnt",
+      "init_net.ipv6.sysctl.max_dst_opts_len",
+      "init_net.ipv6.sysctl.max_hbh_opts_len",
+      "init_net.ipv6.sysctl.auto_flowlabels",
+      "init_net.ipv6.sysctl.flowlabel_reflect",
+      "init_net.ipv6.sysctl.flowlabel_consistency",
+      "init_net.ipv6.sysctl.flowlabel_state_ranges",
+      "init_net.ipv6.sysctl.multipath_hash_policy",
+      "init_net.ipv6.sysctl.multipath_hash_fields",
+      "init_net.ipv6.sysctl.seg6_flowlabel",
+      "init_net.ipv6.sysctl.ioam6_id",
+      "init_net.ipv6.sysctl.ioam6_id_wide",
+      "init_net.ipv6.sysctl.idgen_retries",
+      "init_net.ipv6.sysctl.idgen_delay",
+      "init_net.ipv6.sysctl.bindv6only",
+      "init_net.ipv6.sysctl.ip_nonlocal_bind",
+      "init_net.ipv6.sysctl.fwmark_reflect",
+      "init_net.ipv6.sysctl.anycast_src_echo_reply",
+      "init_net.ipv6.sysctl.fib_notify_on_flag_change"
+    ],
+    "cgroup-net-classification": [
+      "write_classid"
+    ],
+    "netns-and-runtime-misc": [
+      "sysctl_fb_tunnels_only_for_init_net",
+      "sysctl_devconf_inherit_init_net",
+      "netdev_unregister_timeout_secs",
+      "net_ratelimit_state.interval",
+      "net_ratelimit_state.burst",
+      "net_high_order_alloc_disable_key.key",
+      "net_hotdata.tstamp_prequeue",
+      "net_msg_warn",
+      "set_default_qdisc",
+      "net_hotdata.sysctl_mem_pcpu_rsv"
+    ],
+    "boot-cmdline-sizing": [
+      "set_thash_entries",
+      "set_uhash_entries",
+      "set_tcpmhash_entries",
+      "fb_tunnels_only_for_init_net_sysctl_setup",
+      "set_carrier_timeout"
+    ],
+    "cipso-netlabel": [
+      "cipso_v4_cache_enabled",
+      "cipso_v4_cache_bucketsize",
+      "cipso_v4_rbm_optfmt",
+      "cipso_v4_rbm_strictvalid"
+    ]
+  },
+  "interactions": {
+    "_doc": "参数间依赖/互斥/顺序——消费者调 A 时联动 B。boot_only 列的是运行时不可改的(改需 reboot)。",
+    "pairs": [
+      {
+        "relation": "dev_weight 三件套联动：proc_do_dev_weight 互斥锁下，改 dev_weight/dev_weight_rx_bias/dev_weight_tx_bias 任一个都会重算 net_hotdata.dev_rx_weight = weight_p * rx_bias 和 dev_tx_weight = weight_p * tx_bias。同场景同向调。",
+        "params": [
+          "weight_p",
+          "dev_weight_rx_bias",
+          "dev_weight_tx_bias"
+        ]
+      },
+      {
+        "relation": "NAPI 退出条件双约束：netdev_budget（包数预算）和 netdev_budget_usecs（时间预算）任一达成都退出。调优时同向调，否则短板主导。",
+        "params": [
+          "net_hotdata.netdev_budget",
+          "net_hotdata.netdev_budget_usecs"
+        ]
+      },
+      {
+        "relation": "backlog 上限与 NAPI 配额联动：max_backlog 是被动收容，dev_weight/budget 是主动处理。先调主动处理能力（dev_weight/budget），最后才考虑调大 max_backlog（掩盖拥塞信号）。",
+        "params": [
+          "net_hotdata.max_backlog",
+          "weight_p",
+          "net_hotdata.netdev_budget"
+        ]
+      },
+      {
+        "relation": "RPS/RFS 配对：RPS 把软中断跨 CPU 分发，RFS 把流映射到 socket CPU。rps_sock_flow_entries 是 RFS 全局表，需配合网卡/驱动 RPS 配置。>1<<29 返回 -EINVAL；写 0 关闭 RFS。",
+        "params": [
+          "rps_sock_flow_sysctl",
+          "flow_limit_cpu_sysctl"
+        ]
+      },
+      {
+        "relation": "flow limit 双参数：flow_limit_cpu_bitmap（哪些 CPU 开）+ flow_limit_table_len（per-CPU 桶数）。改 table_len 只对新分配的 sd_flow_limit 生效。",
+        "params": [
+          "flow_limit_cpu_sysctl",
+          "netdev_flow_limit_table_len"
+        ]
+      },
+      {
+        "relation": "busy poll 双参数：busy_poll 是 select/poll/epoll 全局默认，busy_read 是 per-socket sk_ll_usec 默认。两者都需 CONFIG_NET_RX_BUSY_POLL。",
+        "params": [
+          "sysctl_net_busy_poll",
+          "sysctl_net_busy_read"
+        ]
+      },
+      {
+        "relation": "TCP/UDP 内存配额同模式：tcp_mem/udp_mem 都是三值[min/pressure/max，按 nr_free_buffer_pages/16 自动初始化。调优时关注 pressure/max 比例，min 一般不动。",
+        "params": [
+          "sysctl_tcp_mem",
+          "sysctl_udp_mem"
+        ]
+      },
+      {
+        "relation": "inet_peer 三件套：threshold（条目上限）+ minttl/maxttl（TTL）。threshold 决定何时进入高负载模式（用 minttl），maxttl 是常规 TTL。三者协同控制 peer 缓存生命周期。",
+        "params": [
+          "inet_peer_threshold",
+          "inet_peer_minttl",
+          "inet_peer_maxttl"
+        ]
+      },
+      {
+        "relation": "fb_tunnels 双入口：boot-only cmdline fb_tunnels= 和运行时 sysctl fb_tunnels_only_for_init_net 共享同一变量。boot 时设的值运行时仍可被 sysctl 覆盖。",
+        "params": [
+          "fb_tunnels_only_for_init_net_sysctl_setup",
+          "sysctl_fb_tunnels_only_for_init_net"
+        ]
+      },
+      {
+        "relation": "IPv6 multipath hash 双参数：fib_multipath_hash_policy=3 时才用 fib_multipath_hash_fields 位图。policy=0/1/2 时 hash_fields 不生效。",
+        "params": [
+          "init_net.ipv6.sysctl.multipath_hash_policy",
+          "init_net.ipv6.sysctl.multipath_hash_fields"
+        ]
+      },
+      {
+        "relation": "BPF JIT 四件套：enable 总开关、harden 加固、kallsyms 符号暴露、limit 内存上限。安全敏感开 harden 关 kallsyms；性能敏感关 harden（保持 enable）。CONFIG_BPF_JIT_ALWAYS_ON 时 enable 永久锁定 1。",
+        "params": [
+          "bpf_jit_enable",
+          "bpf_jit_harden",
+          "bpf_jit_kallsyms",
+          "bpf_jit_limit"
+        ]
+      },
+      {
+        "relation": "CIPSO 四件套：cache_enable（开关）+ cache_bucket_size（桶容量）+ rbm_optfmt（发送优化）+ rbm_strictvalid（接收严格校验）。性能敏感开 cache，安全敏感开 strictvalid。",
+        "params": [
+          "cipso_v4_cache_enabled",
+          "cipso_v4_cache_bucketsize",
+          "cipso_v4_rbm_optfmt",
+          "cipso_v4_rbm_strictvalid"
+        ]
+      },
+      {
+        "relation": "IPv6 选项上限四件套：max_dst_opts_number/max_hbh_opts_number（数量，默认 8）+ max_dst_opts_length/max_hbh_length（字节，默认 INT_MAX）。同时调数量与字节上限才有效。",
+        "params": [
+          "init_net.ipv6.sysctl.max_dst_opts_cnt",
+          "init_net.ipv6.sysctl.max_hbh_opts_cnt",
+          "init_net.ipv6.sysctl.max_dst_opts_len",
+          "init_net.ipv6.sysctl.max_hbh_opts_len"
+        ]
+      },
+      {
+        "relation": "告警限速双参数：message_cost（周期 jiffies，默认 5s）+ message_burst（突发条数，默认 10）。DEFINE_RATELIMIT_STATE 配对初始化。",
+        "params": [
+          "net_ratelimit_state.interval",
+          "net_ratelimit_state.burst"
+        ]
+      }
+    ],
+    "boot_only": [
+      "fb_tunnels_only_for_init_net_sysctl_setup",
+      "set_tcpmhash_entries",
+      "set_uhash_entries",
+      "set_thash_entries",
+      "set_carrier_timeout"
+    ],
+    "mutex": [
+      "skb_defer_max=0 会 static_branch_enable(skb_defer_disable_key) 关闭整套 defer 优化，不是数值调小——生产慎用。",
+      "high_order_alloc_disable=1 会禁用 compound page（大页）优化，加剧 SKB truesize，仅调试用。",
+      "CONFIG_BPF_JIT_ALWAYS_ON 时 bpf_jit_enable 永久锁定 1（min=max=1），写无效。",
+      "tcp_low_latency 和 net_msg_warn(warnings) 是 deprecated：源码注释 obsolete/Unused，改了无效。消费者应过滤。"
+    ]
+  },
+  "rules": [
+    {
+      "id": "R1-softnet-dropped",
+      "trigger": {
+        "symptom": "收包丢包、softnet_stat dropped 高",
+        "keywords": [
+          "drop",
+          "丢包",
+          "softnet",
+          "backlog",
+          "rx_drop",
+          "dropped"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/net/softnet_stat",
+          "field": "per-CPU processed, dropped, cpu_id",
+          "note": "第 2 列 dropped，第 13 列 cpu_id 定位行"
+        },
+        {
+          "judge": "softnet_drop_per_cpu > 0 → Per-CPU backlog 曾满"
+        },
+        {
+          "read": "/proc/net/softnet_stat 第 14/15 列 input_qlen/process_qlen",
+          "judge": "深度接近 net_hotdata.max_backlog（默认 1000）→ 即将再次 drop"
+        },
+        {
+          "read": "/proc/net/softnet_stat 第 3 列 time_squeeze",
+          "judge": "time_squeeze 也高 → NAPI 处理能力不足（先调 dev_weight/budget）；time_squeeze 低 → max_backlog 单纯太小"
+        },
+        {
+          "recommend": "time_squeeze 高：调大 weight_p 或 net_hotdata.netdev_budget（提升处理能力）。time_squeeze 低但 drop：调大 net_hotdata.max_backlog（最后手段，掩盖信号）。同时检查 dev_weight_rx_bias/dev_weight_tx_bias 配比。"
+        },
+        {
+          "verify": "调后重读 softnet_stat dropped 应下降"
+        }
+      ],
+      "fallback_to_capability": "buffer-queue-depth"
+    },
+    {
+      "id": "R2-softnet-time-squeeze",
+      "trigger": {
+        "symptom": "NAPI 因预算退出、time_squeeze 频繁、吞吐未跑满",
+        "keywords": [
+          "time_squeeze",
+          "squeeze",
+          "budget",
+          "NAPI",
+          "softirq",
+          "退出"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/net/softnet_stat",
+          "field": "per-CPU processed, time_squeeze, cpu_id"
+        },
+        {
+          "judge": "softnet_time_squeeze_ratio > 0.10 → NAPI 因预算退出而非空"
+        },
+        {
+          "read": "net_hotdata.netdev_budget 和 net_hotdata.netdev_budget_usecs 当前值",
+          "note": "默认 budget=300, budget_usecs=2 jiffies"
+        },
+        {
+          "recommend": "调大 net_hotdata.netdev_budget（包数预算）或 net_hotdata.netdev_budget_usecs（时间预算）。两者同向调，否则短板主导。也可调大 weight_p（dev_weight）"
+        },
+        {
+          "verify": "调后重读 softnet_stat time_squeeze 应下降，processed 上升"
+        }
+      ],
+      "fallback_to_capability": "buffer-queue-depth"
+    },
+    {
+      "id": "R3-rps-not-working",
+      "trigger": {
+        "symptom": "跨 CPU 收包不均、RPS 未启用或 RFS 表未配置",
+        "keywords": [
+          "rps",
+          "rfs",
+          "跨CPU",
+          "不均",
+          "received_rps",
+          "flow"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/net/softnet_stat 第 10 列 received_rps",
+          "judge": "received_rps == 0 而 CPU 不均 → RPS 未启用（rps_sock_flow_entries=0）"
+        },
+        {
+          "read": "rps_sock_flow_sysctl 当前值",
+          "note": "需 CONFIG_RPS；0=禁用"
+        },
+        {
+          "recommend": "调大 rps_sock_flow_sysctl（向上取整到 2 的幂，封顶 1<<29）。配合网卡/驱动 RPS 配置"
+        },
+        {
+          "verify": "调后重读 softnet_stat received_rps 应 > 0，CPU 不均应缓解"
+        }
+      ],
+      "fallback_to_capability": "rps-flow-limit"
+    },
+    {
+      "id": "R4-flow-limit-triggered",
+      "trigger": {
+        "symptom": "单流 PPS 暴增拖慢 softirq、flow_limit_count 异常",
+        "keywords": [
+          "flow_limit",
+          "单流",
+          "暴增",
+          "pps",
+          "flow_limit_count"
+        ]
+      },
+      "steps": [
+        {
+          "read": "/proc/net/softnet_stat 第 11 列 flow_limit_count",
+          "judge": "> 0 → flow limit 曾触发（单流暴增被限）"
+        },
+        {
+          "read": "flow_limit_cpu_sysctl 当前值（cpumask）",
+          "note": "需 CONFIG_NET_FLOW_LIMIT；位图为 0 = 所有 CPU 关闭 flow limit"
+        },
+        {
+          "judge": "flow_limit_count > 0 但 cpu_bitmap=0 → flow limit 未开（count 是历史值）；cpu_bitmap 已开但 count 高 → 单流仍在暴增"
+        },
+        {
+          "recommend": "确认 flow_limit_cpu_bitmap 已对热点 CPU 置位。如桶冲突率高，调大 netdev_flow_limit_table_len（必须 2 的幂）"
+        },
+        {
+          "verify": "调后重读 softnet_stat flow_limit_count 应稳定，单流不再拖慢 softirq"
+        }
+      ],
+      "fallback_to_capability": "rps-flow-limit"
+    },
+    {
+      "id": "R5-tcp-mem-pressure",
+      "trigger": {
+        "symptom": "大量 TCP 连接、tcp mem pressure 频繁触发、吞吐被内存上限压",
+        "keywords": [
+          "tcp_mem",
+          "pressure",
+          "orphan",
+          "TCP内存",
+          "tcp_max_orphans"
+        ]
+      },
+      "steps": [
+        {
+          "read": "sysctl_tcp_mem 当前值（三值）",
+          "note": "默认按 nr_free_buffer_pages/16 自动初始化，不同内存机器不同"
+        },
+        {
+          "judge": "若 pressure 频繁触发 → tcp_mem[1] 过低"
+        },
+        {
+          "read": "sysctl_tcp_max_orphans 当前值",
+          "judge": "orphan 数超限导致连接被强制 RST → tcp_max_orphans 过低"
+        },
+        {
+          "recommend": "调大 sysctl_tcp_mem（关注 pressure/max 比例，min 一般不动）。orphan 被强制杀则调大 sysctl_tcp_max_orphans。注意 tcp_low_latency 已废弃改无效"
+        },
+        {
+          "verify": "调后重读 tcp_mem pressure 计数应下降，连接不再被强制 RST"
+        }
+      ],
+      "fallback_to_capability": "tcp-tuning"
+    },
+    {
+      "id": "R6-busy-poll-latency",
+      "trigger": {
+        "symptom": "socket 阻塞读延迟高、应用 select/poll 期间软中断唤醒开销大",
+        "keywords": [
+          "busy_poll",
+          "busy_read",
+          "延迟",
+          "latency",
+          "poll",
+          "epoll"
+        ]
+      },
+      "steps": [
+        {
+          "read": "sysctl_net_busy_poll 和 sysctl_net_busy_read 当前值",
+          "note": "需 CONFIG_NET_RX_BUSY_POLL；两者默认 0=禁用"
+        },
+        {
+          "judge": "都=0 → busy poll 未启用；CPU 富余可考虑开"
+        },
+        {
+          "recommend": "调大 sysctl_net_busy_poll（全局默认）或 sysctl_net_busy_read（per-socket 默认）。从低值开始（如 50us）观察延迟与 CPU 占用权衡"
+        },
+        {
+          "verify": "调后应用 select/poll 延迟应下降，但 CPU 占用会上升"
+        }
+      ],
+      "fallback_to_capability": "napi-busy-poll"
+    },
+    {
+      "id": "R7-ipv6-options-dropped",
+      "trigger": {
+        "symptom": "IPv6 包被丢弃（HBH/DST 选项超限）",
+        "keywords": [
+          "ipv6",
+          "hbh",
+          "dst_opts",
+          "选项",
+          "exthdr",
+          "丢弃"
+        ]
+      },
+      "steps": [
+        {
+          "read": "init_net.ipv6.sysctl.max_dst_opts_cnt/max_hbh_opts_cnt/max_dst_opts_len/max_hbh_opts_len 当前值",
+          "note": "默认 cnt=8/8，len=INT_MAX/INT_MAX"
+        },
+        {
+          "judge": "应用需更多选项而 cnt/len 上限低 → 包被丢弃"
+        },
+        {
+          "recommend": "调大对应 max_*_number（数量）或 max_*_length（字节）。注意：放宽上限会加剧解析开销和滥用风险"
+        },
+        {
+          "verify": "调后 IPv6 包不再因选项超限被丢弃"
+        }
+      ],
+      "fallback_to_capability": "ipv6-options-flowlabel"
+    },
+    {
+      "id": "R8-ipv6-ecmp-hash-uneven",
+      "trigger": {
+        "symptom": "IPv6 ECMP hash 流分布不均",
+        "keywords": [
+          "ecmp",
+          "multipath",
+          "hash",
+          "fib_multipath",
+          "流分布",
+          "ipv6"
+        ]
+      },
+      "steps": [
+        {
+          "read": "init_net.ipv6.sysctl.multipath_hash_policy 当前值",
+          "note": "需 CONFIG_IP_ROUTE_MULTIPATH；0=L3/1=L4/2=flowinfo/3=字段位图"
+        },
+        {
+          "judge": "policy=0/1 → hash 字段少，流分布可能不均"
+        },
+        {
+          "read": "init_net.ipv6.sysctl.multipath_hash_fields 当前值",
+          "judge": "仅 policy=3 时 hash_fields 生效"
+        },
+        {
+          "recommend": "调到 policy=3 并按需设 multipath_hash_fields 位图（如加入源/目的端口）。权衡：更多字段提升精度但增加计算开销"
+        },
+        {
+          "verify": "调后 ECMP 流分布应更均匀"
+        }
+      ],
+      "fallback_to_capability": "ipv6-options-flowlabel"
+    },
+    {
+      "id": "R9-bpf-jit-fail-or-security",
+      "trigger": {
+        "symptom": "BPF 程序加载失败（JIT 内存不足）或安全策略需调整",
+        "keywords": [
+          "bpf",
+          "jit",
+          "加载失败",
+          "harden",
+          "kallsyms",
+          "limit"
+        ]
+      },
+      "steps": [
+        {
+          "read": "bpf_jit_limit 和 bpf_jit_enable 当前值",
+          "note": "需 CONFIG_BPF_JIT；CONFIG_BPF_JIT_ALWAYS_ON 时 enable 永久锁定 1"
+        },
+        {
+          "judge": "JIT 内存不足导致加载失败 → bpf_jit_limit 过低；性能不足 → enable=0"
+        },
+        {
+          "read": "bpf_jit_harden 和 bpf_jit_kallsyms 当前值",
+          "judge": "多租户/不信任 → harden 应 ≥1；kallsyms 生产应=0"
+        },
+        {
+          "recommend": "JIT 内存不足：调大 bpf_jit_limit。性能不足：确保 bpf_jit_enable=1（CONFIG_BPF_JIT_ALWAYS_ON 时已锁定）。安全敏感：开 bpf_jit_harden=2，关 bpf_jit_kallsyms=0。注意写需 CAP_SYS_ADMIN"
+        },
+        {
+          "verify": "调后 BPF 程序加载成功，JIT 镜像内存占用在 limit 内"
+        }
+      ],
+      "fallback_to_capability": "bpf-jit-security"
+    },
+    {
+      "id": "R10-tx-qdisc-stall",
+      "trigger": {
+        "symptom": "TX qdisc 队列堆积、发方向软中断频繁但出队少",
+        "keywords": [
+          "qdisc",
+          "tx",
+          "发方向",
+          "队列",
+          "burst",
+          "出队"
+        ]
+      },
+      "steps": [
+        {
+          "read": "net_hotdata.qdisc_max_burst 当前值",
+          "note": "默认 1000"
+        },
+        {
+          "read": "dev_weight_tx_bias 当前值",
+          "note": "dev_tx_weight = weight_p * tx_bias"
+        },
+        {
+          "judge": "TX 软中断频繁但出队少 → qdisc_max_burst 过低或 tx_bias 过低"
+        },
+        {
+          "recommend": "调大 net_hotdata.qdisc_max_burst（出队批量）或 dev_weight_tx_bias（TX 配额倍率）。权衡：加剧单次 TX 软中断 CPU 占用"
+        },
+        {
+          "verify": "调后 TX qdisc 队列深度应下降，发方向吞吐应提升"
+        }
+      ],
+      "fallback_to_capability": "buffer-queue-depth"
+    }
+  ]
+}

@@ -1,0 +1,266 @@
+{
+  "module": "io",
+  "version": "v7.2-rc7",
+  "items": [
+    {
+      "name": "weight",
+      "kernel_name": "ioc_weight_write",
+      "path": "/sys/fs/cgroup/io.<name>/weight",
+      "category": "tunable",
+      "gate": "CONFIG_BLK_CGROUP_IOCOST",
+      "unit": "count",
+      "default": 100,
+      "range": {
+        "min": 1,
+        "max": 10000,
+        "special": {
+          "0": "写成 0 在 per-device 'MAJ:MIN default' 形式下表示该 cgroup 该设备用 root 的 default weight（即清除 per-device 覆盖，回退到 dfl_weight）"
+        }
+      },
+      "summary": "iocost 控制器的 cgroup IO 权重（1..10000，默认 100=CGROUP_WEIGHT_DFL）。该 cgroup 在设备内分得的 IO vtime 与带宽按权重比例分配；不写 IO 配额、只调比例份额。两种写法：'N' 或 'default N' 设本 cgroup 的默认权重；'MAJ:MIN N' 或 'MAJ:MIN default' per-device 覆盖。",
+      "when_to_increase": [
+        "某 cgroup 关键 IO 延迟差、被其他组挤压",
+        "组间 IO 份额比例不公，关键组需要更高占比"
+      ],
+      "when_to_decrease": [
+        "某 cgroup IO 占用过大影响其他组",
+        "想给次要/批量组降权避免抢 IO"
+      ],
+      "increasing": {
+        "good_for": [
+          "提升该 cgroup 在设备内分得的 IO 时间与带宽",
+          "降低关键 cgroup 的 IO 等待延迟"
+        ],
+        "bad_for": [
+          "挤压同设备其他 cgroup 的 IO 份额",
+          "权重偏离设备实际能力时无法兑现承诺"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "让出 IO 时间给其他 cgroup",
+          "抑制批量/低优组的 IO 抢占"
+        ],
+        "bad_for": [
+          "本组 IO 带宽与延迟变差",
+          "过小可能在层级 donation/claim 时被持续饿死"
+        ]
+      },
+      "consumes": [
+        "block/blk-iocost.c:weight_updated",
+        "block/blk-iocost.c:iocg->cfg_weight"
+      ],
+      "version_notes": "weight 是相对份额不是绝对配额；iocost 用权重→hweight→vtime 的层级分配+donation 机制在子层间传递。CFTYPE_NOT_ON_ROOT：根 cgroup 不可写 weight，只能在子组设。"
+    },
+    {
+      "name": "cost.qos",
+      "kernel_name": "ioc_qos_write",
+      "path": "/sys/fs/cgroup/io.<name>/cost.qos",
+      "category": "tunable",
+      "gate": "CONFIG_BLK_CGROUP_IOCOST",
+      "unit": "interface",
+      "default": "auto（按设备类型自动选 HDD/SSD_QD1/SSD_DFL/SSD_FAST 默认 QoS）",
+      "range": {},
+      "summary": "iocost per-device QoS 配置接口。写 'MAJ:MIN <token=value>...' 设：enable=0/1 启停 iocost、ctrl=auto|user 切自动/手动、rpct/wpct=0..100.00 读写延迟目标比例、rlat/wlat=us 读写延迟目标、min/max=vrate clamp(ppm)。ctrl=user 后 iocost 不再随设备 busy_level 自适应 vrate，固定按用户 QoS 算。",
+      "when_to_increase": [
+        "需要按业务延迟 SLA 给设备设硬延迟目标",
+        "auto 模式 vrate 自适应让 IO 优先级不稳，要固定下来"
+      ],
+      "when_to_decrease": [
+        "用户设的 rlat/wlat 过紧导致 vrate 被压到 VRATE_MIN 反而限制吞吐",
+        "切回 auto 让 iocost 自适配设备特性"
+      ],
+      "increasing": {
+        "good_for": [
+          "(无单调性,接口式配置)",
+          "写更紧的 rlat/wlat 目标使 iocost 调高 vrate 满足延迟"
+        ],
+        "bad_for": [
+          "过紧的延迟目标把 vrate 顶到 max，反而导致设备饱和/抖动",
+          "min/max clamp 收窄会限制 iocost 自适应范围"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,接口式配置)",
+          "放松 rlat/wlat 或切 auto 给 iocost 更多自由度"
+        ],
+        "bad_for": [
+          "延迟目标放松后关键 IO 响应变差",
+          "enable=0 直接关掉 iocost，QoS 不再约束"
+        ]
+      },
+      "consumes": [
+        "block/blk-iocost.c:ioc->params.qos",
+        "block/blk-iocost.c:ioc_refresh_params"
+      ],
+      "version_notes": "CFTYPE_ONLY_ON_ROOT：只在 root io cgroup 可见，per-device 写法 'MAJ:MIN ...'。VRATE_MIN_PPM=10000(1%)、VRATE_MAX_PPM=100000000(10000%)。延迟参数单位 us（rlat=250000=250ms）。"
+    },
+    {
+      "name": "cost.model",
+      "kernel_name": "ioc_cost_model_write",
+      "path": "/sys/fs/cgroup/io.<name>/cost.model",
+      "category": "tunable",
+      "gate": "CONFIG_BLK_CGROUP_IOCOST",
+      "unit": "interface",
+      "default": "auto（按设备特性选 AUTOP_HDD/SSD_QD1/SSD_DFL/SSD_FAST 之一）",
+      "range": {},
+      "summary": "iocost per-device 线性成本模型系数配置。写 'MAJ:MIN ctrl=auto|user model=linear rbps=.. rseqiops=.. rrandiops=.. wbps=.. wseqiops=.. wrandiops=..' 设线性模型参数，把 IO 字节/IOPS 折算为 vtime 成本。ctrl=auto 时 iocost 用自动模型并周期评估切换，ctrl=user 锁定用户模型。",
+      "when_to_increase": [
+        "auto 模型不贴合设备实际，vrate 失准",
+        "想手动微调让 iocost 成本核算更接近真实"
+      ],
+      "when_to_decrease": [
+        "用户模型系数设错导致 vrate 漂移/分配不公",
+        "切回 auto 让 iocost 用自动评估"
+      ],
+      "increasing": {
+        "good_for": [
+          "(无单调性,接口式配置)",
+          "改 rbps/wbps/IOPS 系数让大块 IO 的 vtime 成本与设备实际带宽对齐"
+        ],
+        "bad_for": [
+          "系数设错会让权重→vtime 换算失真，cgroup 间份额偏离设定",
+          "ctrl=user 后 iocost 不再按设备 busy_level 自校正"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,接口式配置)",
+          "改系数让小 IO 的成本核算更接近实际"
+        ],
+        "bad_for": [
+          "改错方向会让 iocost 误判设备能力，vrate 异常",
+          "切 auto 后用户系数被忽略"
+        ]
+      },
+      "consumes": [
+        "block/blk-iocost.c:ioc->params.i_lcoefs",
+        "block/blk-iocost.c:ioc_refresh_params"
+      ],
+      "version_notes": "CFTYPE_ONLY_ON_ROOT：只在 root io cgroup 可见。linear 是 v7.2-rc7 唯一支持的 model。系数单位：bps 是 bytes/sec，iops 是 ios/sec。"
+    },
+    {
+      "name": "prio.class",
+      "kernel_name": "ioprio_set_prio_policy",
+      "path": "/sys/fs/cgroup/io.<name>/prio.class",
+      "category": "tunable",
+      "gate": "CONFIG_BLK_CGROUP_IOPRIO",
+      "unit": "enum: no-change|promote-to-rt|restrict-to-be|idle|none-to-rt",
+      "default": "no-change",
+      "range": {},
+      "summary": "blk-ioprio 控制器策略：对该 cgroup 的 bio 指定 IO 优先级类策略。no-change=不改（默认）；promote-to-rt/none-to-rt=把非 RT 提为 IOPRIO_CLASS_RT(level 4)；restrict-to-be=把 NONE/RT 降为 BE；idle=全部降为 IDLE。在 blkcg_set_ioprio 里改 bio->bi_ioprio。",
+      "when_to_increase": [
+        "关键 cgroup IO 延迟差，需提为 RT 抢占其他组",
+        "想用 RT 优先级让该组 IO 优先调度"
+      ],
+      "when_to_decrease": [
+        "批量/低优 cgroup 想让出 IO 调度优先级",
+        "某组 IO 太抢手想压成 BE 或 IDLE"
+      ],
+      "increasing": {
+        "good_for": [
+          "(无单调性,枚举切换)",
+          "promote-to-rt/none-to-rt 提该组 bio 为 RT 类，IO 调度时优先"
+        ],
+        "bad_for": [
+          "RT 提权后该组 IO 可能饿死其他 cgroup",
+          "需要 IO scheduler/设备支持 IOPRIO 才生效（mq-deadline/multiqueue 等）"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "(无单调性,枚举切换)",
+          "restrict-to-be/idle 让该组让出调度优先级，给关键组让路"
+        ],
+        "bad_for": [
+          "idle 策略下该组 IO 仅在设备空闲时才被处理，可能长期饥饿",
+          "restrict-to-be 把已是 RT 的降为 BE，破坏原 RT 语义"
+        ]
+      },
+      "consumes": [
+        "block/blk-ioprio.c:blkcg_set_ioprio",
+        "block/blk-ioprio.c:ioprio_blkcg->prio_policy"
+      ],
+      "version_notes": "策略在 bio 提交路径生效，影响 page cache writeback IO（ioprio_set() 系统调用不影响 writeback IO，本 cgroup 策略会）。prio.class 是 cgroup v1/v2 通一接口（dfl_cftypes 与 legacy_cftypes 同一个 ioprio_files）。"
+    },
+    {
+      "name": "elevator",
+      "kernel_name": "elevator_setup",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "unit": "deprecated",
+      "default": "未指定",
+      "range": {},
+      "summary": "已废弃的 boot cmdline 参数 elevator=<scheduler>。原意是设系统默认 IO 调度器；v7.2-rc7 仅 pr_warn 'does not have any effect anymore'，已完全不生效。要设 per-device IO 调度器需写 /sys/block/<dev>/queue/scheduler。",
+      "when_to_increase": [
+        "(已废弃,改无效)"
+      ],
+      "when_to_decrease": [
+        "(已废弃,改无效)"
+      ],
+      "increasing": {
+        "good_for": [
+          "(已废弃,改无效)"
+        ],
+        "bad_for": []
+      },
+      "decreasing": {
+        "good_for": [
+          "(已废弃,改无效)"
+        ],
+        "bad_for": []
+      },
+      "consumes": [
+        "block/elevator.c:elevator_setup"
+      ],
+      "deprecated": true,
+      "boot_only": true,
+      "version_notes": "v7.2-rc7 handler 只调 pr_warn 然后返回 1（保留参数避免被当 unknown 选项），不修改任何状态。改 IO 调度器用 /sys/block/<dev>/queue/scheduler 写 'mq-deadline'|'none'|'kyber'|'bfq'（依设备支持的 scheduler）。"
+    },
+    {
+      "name": "bdev_allow_write_mounted",
+      "kernel_name": "setup_bdev_allow_write_mounted",
+      "path": "kernel cmdline",
+      "category": "tunable",
+      "gate": "",
+      "unit": "bool",
+      "default": true,
+      "range": {},
+      "summary": "boot cmdline 开关 bdev_allow_write_mounted=1/0。开启时（默认，等价 CONFIG_BLK_DEV_WRITE_MOUNTED=y）允许对已挂载的块设备写打开；关闭时 bdev_may_open 拒绝已挂载设备的 BLK_OPEN_WRITE，bdev_claim_write_access 不再跳过 write 计数。保护 filesystem 不被裸写冲垮 buffer cache。",
+      "when_to_increase": [
+        "需在已挂载的根设备上跑 fsck、改 ext4 在线特性等运维场景"
+      ],
+      "when_to_decrease": [
+        "担心失控特权进程裸写已挂载设备导致文件系统损坏",
+        "加固生产环境防止误写"
+      ],
+      "increasing": {
+        "good_for": [
+          "允许 fsck/在线特性修改等需对挂载块设备写打开的运维"
+        ],
+        "bad_for": [
+          "失控特权进程可直接裸写已挂载设备，可能损坏文件系统或 panic",
+          "绕过 filesystem 的元数据完整性校验"
+        ]
+      },
+      "decreasing": {
+        "good_for": [
+          "阻止对已挂载块设备的写打开，减少误写导致 fs 损坏的风险"
+        ],
+        "bad_for": [
+          "部分运维工具（fsck 读写模式、在线特性修改）无法工作",
+          "需重启才能切换"
+        ]
+      },
+      "consumes": [
+        "block/bdev.c:bdev_may_open",
+        "block/bdev.c:bdev_claim_write_access",
+        "block/bdev.c:bdev_yield_write_access"
+      ],
+      "boot_only": true,
+      "version_notes": "默认值取自 CONFIG_BLK_DEV_WRITE_MOUNTED（block/Kconfig 默认 y）。改需 reboot（__setup 解析只在 boot 时跑一次）。不阻止通过 SCSI 直连命令或下层存储栈的修改，仅限制 block device 的写打开。"
+    }
+  ]
+}
