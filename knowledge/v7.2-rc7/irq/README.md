@@ -48,12 +48,29 @@
 - `irqhandler.duration_warn_us=0` 被源码拒绝（pr_err + return 0），必须 > 0。
 - 改 `smp_affinity` 后立即生效但中断真正迁移可能在下次中断投递时（managed/在途中断有 pending mask 缓冲）——改完等几个中断周期再读 `effective_affinity` 验证。
 
+## 用户空间工具（消费 playbook.userspace_tools 落地）
+
+> irq 域专用用户态工具较少（irqbalance/irqtop/irqstat 本机未装未读），**核心写中断亲和是裸 procfs 文件操作**——`echo <cpulist> > /proc/irq/<irqN>/smp_affinity_list`。详见 `playbook.json` 的 `userspace_tools` 节。
+
+- **拓扑观察（写 smp_affinity 前置）**：`lspci -vmm`（读 NUMANode tag 找网卡/设备所连 NUMA 节点）、`lscpu -e=cpu,node,core`（CPU↔NUMA↔core 映射）、`lstopo`/`hwloc-ls`（图形/文本拓扑）、`numactl -H`（节点清单）。
+- **中断观察（实时）**：`watch -n1 cat /proc/interrupts`（per-IRQ per-CPU 计数变化定位热点 IRQ）、`watch -n1 cat /proc/irq/<irqN>/spurious`（伪中断计数变化）、`watch -n1 cat /proc/irq/<irqN>/effective_affinity`（写完验证生效）。
+- **任务 NUMA 绑定（配合中断局部性）**：`numactl --cpunodebind=<node> --membind=<node>` 让中断处理进程与数据同 node；`netdev:DEV` 语法直接对齐网卡所在节点。
+- **写中断亲和（核心手段，裸 procfs 操作）**：
+  - `echo <cpulist> > /proc/irq/<irqN>/smp_affinity_list`（**推荐 cpulist 格式**，如 `0-3,8`）
+  - `echo <hexmask> > /proc/irq/<irqN>/smp_affinity`（hex 位掩码，低位=CPU0）
+  - `echo <hexmask> > /proc/irq/default_smp_affinity`（全局默认，只影响新中断，无 _list 变体）
+  - **限制**：AFFINITY_MANAGED/PER_CPU 中断写返回 -EPERM（先 `cat effective_affinity` 看可否改）；空集返回 -EINVAL；写完需等几个中断周期再读 `effective_affinity` 验证。
+- **boot-only 治疗手段**：irq-debug-recovery 的恢复（`noirqdebug`/`irqfixup`/`irqpoll`/`irqhandler.duration_warn_us`）是 cmdline 参数，**运行时不可改**，要改需 reboot——这些不是用户态工具的替代，是改 grub 的入口。
+
+工具不替代 tunable：`kernel_alternative` 字段标明每个工具替代/互补哪个内核参数（kernel_name 引用）。boot-only 的 `irqaffinity=<cpulist>` 是 boot 期全局默认，运行时用 `echo > default_smp_affinity` 等价。
+
 ## 配套
 
 > 以下命令在模块目录内跑（`--knowledge .` 指当前目录）；在仓库根跑则用全路径如 `--knowledge knowledge/v7.2-rc7/irq`。
 - 列模块所有参数摘要：`python3 query.py --knowledge . --list`
 - 取某参数完整记录：`python3 query.py --knowledge . --name irq_affinity_proc_ops`
 - 诊断流程与规则（智能/规则/混合三模式）：见同目录 `playbook.json`，用 `python3 query.py --knowledge . --playbook [--mode {intelligent|rule|hybrid}]` 取。
+- 用户空间工具清单：同 `playbook.json` 的 `userspace_tools` 节，用 `python3 query.py --knowledge . --playbook` 取（含完整 key_options/when_to_use/kernel_alternative/caveats）。
 - 不懂的术语：`python3 query.py --vocab knowledge/vocab.json --name spurious`
 
 > v7.2-rc7 增量说明：本模块为首次生产（无 v7.1 对照基线）。参数层已 verify（missing=0/extra=0/drifted=0），13 项全产（8 tunable + 5 readonly）。per-irq 项 path 含 `<irqN>` 占位符标 `per_irq: true`，消费者给建议时需代入实际中断号（从 `/proc/interrupts` 取 IRQ 行号）。所有 cmdline 参数标 `boot_only: true`。

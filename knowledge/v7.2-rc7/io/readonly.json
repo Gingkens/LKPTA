@@ -6,6 +6,7 @@
       "name": "stat",
       "kernel_name": "blkcg_print_stat",
       "path": "/sys/fs/cgroup/io.<name>/stat",
+      "per_cgroup": true,
       "category": "readonly",
       "gate": "",
       "summary": "io cgroup per-device IO 统计汇总。每行格式 '<devname> rbytes=.. wbytes=.. dbytes=.. rios=.. wios=.. dios=..'（可选追加 use_delay=.. delay_nsec=.. 当 blkcg_debug_stats 开）。root cgroup 用系统级 disk_stats 回填，非 root 用 blkg->iostat rstat。",

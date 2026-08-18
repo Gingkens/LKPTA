@@ -1,7 +1,6 @@
 {
   "module": "vocab",
-  "description": "跨模块共享的内核调度/调优领域词汇表。消费者在阅读 knowledge 的 summary/tuning/use 等字段遇到不懂的术语时查这里。schema 字段名（category/path/gate 等）不在此表——它们的定义见 CONSUMER.md §3 字段表。生产者生产 knowledge 时遇到新术语请在此追加。",
-  "version": "v7.1.0-rc5",
+  "description": "跨模块共享的内核调度/调优领域术语表。消费者在阅读 knowledge 的 summary/tuning/use 等字段遇到不懂的术语时查这里。schema 字段名（category/path/gate 等每个 key 的含义、必填性、合法值）不在此表——见 knowledge/schema.json（机器可读的权威定义源）。本文件跨版本稳定（术语定义不随内核版本变），不带版本号；内核新术语跨版本累积追加。生产者生产 knowledge 时遇到新术语请在此追加。",
   "terms": [
     {
       "term": "EEVDF",

@@ -52,7 +52,7 @@ uname -r                       # 如 7.1.0-rc5
 
 ## 3. 字段含义
 
-每条 knowledge 记录的字段（生产者按 [`PRODUCER.md`](./PRODUCER.md) 填写）：
+每条 knowledge 记录的字段（生产者按 [`PRODUCER.md`](./PRODUCER.md) 填写，机器可读的权威定义见 [`knowledge/schema.json`](./knowledge/schema.json)——本表是给人读的导引，字段必填性/类型/合法值以 schema.json 为准）：
 
 | 字段 | 你怎么用 |
 |---|---|
@@ -73,7 +73,7 @@ uname -r                       # 如 7.1.0-rc5
 | `boot_only` | tunable 项若为 `true`，该参数只能 boot cmdline 设置（运行时不可改）。给建议时提示"改 grub/reboot"而非 `echo`。 |
 | `consumes` | 该变量在内核被哪里消费（可选，数组），帮你理解调参的影响面。 |
 | `version_notes` | 该参数在本版本的特殊说明，留意。 |
-| `per_cpu`/`per_domain` 等标注 | path 含占位符时出现，提醒你该参数是 per-cpu/per-domain，需遍历或抽样。 |
+| `per_cpu`/`per_domain`/`per_cgroup`/`per_pid`/`per_irq` | path 含占位符（`cpuN`/`domainN`/`<name>`/`<pid>`/`<irqN>`）时出现，提醒你该参数是 per-cpu/per-domain/per-cgroup/per-pid/per-irq，需遍历或抽样。per-cgroup 取目标 cgroup 路径；per-pid 选代表进程；per-irq 按目标中断号。 |
 
 （生产者**不放 `file_symbol`/`source` 字段**——那是定位源码用的，消费者不需要；行号更是会跨版本漂移，故整个系统用符号名。）
 
@@ -97,7 +97,7 @@ uname -r                       # 如 7.1.0-rc5
   "when_to_decrease": ["负载不均某 CPU 闲置", "跨 CPU 利用率差需更激进迁移"],
   "increasing": { "good_for": ["提升 cache 局部性", "减少跨 CPU 迁移"], "bad_for": ["加剧负载不均", "降低跨 CPU 利用率均衡"] },
   "decreasing": { "good_for": ["促进负载均衡", "提升跨 CPU 利用率均衡"], "bad_for": ["增加 cache miss", "增加迁移开销"] },
-  "consumes": ["kernel/sched/core.c:8996"]
+  "consumes": ["kernel/sched/fair.c:task_dead_fair", "kernel/sched/core.c:sched_init"]
 }
 ```
 
@@ -172,6 +172,18 @@ python3 query.py --knowledge knowledge/v7.1.0-rc5/sched --category tunable --det
 
 `--knowledge` 指向 `knowledge/<version>/<module>/` 目录。先 `--list` 扫摘要，决定要看哪些参数，再 `--name` 取完整记录——这是高效消费的节奏。
 
+**族参数（如 `sysctl_sched_features` 含多个 bit）的查询**：playbook 的 `candidate_levers` 会用 `sysctl_sched_features[bit LB_MIN]` 形式引用某个 bit，但 `--name` 不接受带方括号的整串（shell 会把 `[...]` 当 glob，query.py 也按完整 kernel_name 匹配）。取法是 `--keyword` 找 bit 名（会搜进 summary/when_to_*/good_for/bad_for），或 `--path features` 定位 sched_features 文件族：
+
+```bash
+# 找 LB_MIN bit 的记录（keyword 搜进方向字段，需 --detail 才展开）
+python3 query.py --knowledge knowledge/v7.2-rc7/sched --keyword LB_MIN --detail
+
+# 列 sched_features 文件族下所有 bit
+python3 query.py --knowledge knowledge/v7.2-rc7/sched --path features --list
+```
+
+不要写 `--name 'sysctl_sched_features[bit LB_MIN]'`——既过不了 shell glob，query.py 也不认这种带后缀的引用形式。
+
 ### 3.4 选模块与诊断流程（README + playbook）
 
 参数查询（§3.3）是"已知查哪个参数"时用的。还有两类查询面向"分析"而非"取参数"：
@@ -204,6 +216,8 @@ python3 query.py --knowledge knowledge/v7.1.0-rc5/sched --playbook --capability 
 
 **关键认知**：query.py 的 `--mode` 只决定**展示哪部分 playbook 原料**，真正"用智能推理还是规则匹配"是**你自己（消费者 agent）的行为**——playbook 供弹药不强制走哪条路。三种模式你按 profiling 数据的复杂度自选。
 
+**用户态工具落地**：playbook 的 `userspace_tools` 节列出该模块常用的用户态工具（taskset/numactl/chrt/sysctl/systemd-run 等），每条带 `when_to_use`/`key_options`/`kernel_alternative`/`caveats`。`kernel_alternative` 用 kernel_name 指向互补或替代的内核参数——改完 tunable 后用这些工具把决策落到任务（绑核/绑 NUMA/调优先级/cgroup 限额）。该节是"内核参数→任务落地"的最后一公里，不是新参数层；`--playbook` 取整个 playbook 时已含此节，无需额外参数。
+
 `playbook.json` 是**可选**产物（老模块可能没有），无则 `--playbook` 报"no playbook.json"，退化为只用 §3.3 的参数查询 + CONSUMER.md 的通用工作流。
 
 **遇到不懂的术语**：knowledge 的 summary/tuning/use 字段里可能出现内核行话（EEVDF、cache-cold、PELT、SD_NUMA、TTWU…）。用共享词汇表查：
@@ -217,6 +231,8 @@ python3 query.py --vocab knowledge/vocab.json --keyword cache
 ```
 
 `knowledge/vocab.json` 是跨模块共享的领域词汇表（schema 字段名如 category/path 不在此，见 §3 字段表）。消费者读到不懂的术语就查它，不用猜，也别要求用户解释。
+
+**`--vocab` 与 `--knowledge` 是互斥 flag**：`--vocab` 指向词表文件（`knowledge/vocab.json`），`--knowledge` 指向模块目录（`knowledge/<version>/<module>/`）。两者各走一条查询路径，**不能同时给**。混用会报 "not a directory" 或 "need --knowledge / --vocab"——若看到这类报错先检查是不是把两个 flag 写一起了。
 
 ## 4. 给建议的工作流
 
@@ -237,6 +253,7 @@ python3 query.py --vocab knowledge/vocab.json --keyword cache
    - 现状依据（readonly 诊断 + thresholds 判据）
    - 风险/代价（对应 bad_for；涉及 interactions 时注明联动/互斥）
    - 回滚方式（通常记下原值即可，或写默认值）
+   - **工具落地（可选）**：若该模块 playbook 有 `userspace_tools` 节且建议涉及"任务具体落在哪个 CPU/NUMA 节点/调度类/cgroup 限额"，从该节选一条工具命令附在建议后——改 tunable 是改"调度策略/门槛/配额"，工具把决策落到具体任务（如调 `migration_cost_ns` 后用 `taskset -cp <cpu> <pid>` 把热点进程绑到目标核）。纯 sysctl/debugfs 数值参数不必配工具。
 
 7. **标注版本**：建议里注明所用 knowledge 版本，若与目标系统不一致要提示用户现场核对默认值/语义。
 
@@ -263,6 +280,8 @@ python3 query.py --vocab knowledge/vocab.json --keyword cache
             代价 decreasing.bad_for=增加 cache miss/增加迁移开销, 短暂可接受。
   现状依据: /proc/schedstat lb_failed/lb_count 偏高 + 拓扑跨 NUMA 域, 确认迁移阻力大、负载不均。
   回滚: echo 500000 > .../migration_cost_ns
+  工具落地: taskset -cp <目标 CPU 列表> <热点进程 PID>  # 把热点进程显式绑到目标核,
+           避免改完 migration_cost_ns 后仍依赖负载均衡被动迁移。
 
 注意: 所用 knowledge 版本 v7.1.0-rc5 与目标一致, 默认值已核对。
 ```

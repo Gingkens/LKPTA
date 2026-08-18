@@ -33,8 +33,8 @@ and playbook.json (the selection/flow layers) are OPTIONAL module artifacts
 and are NOT checked here — completeness is about parameter coverage only.
 
 Usage:
-    verify.py --recipe scan_recipes/sched.json --ksrc /home/lgk/linux \
-              --against knowledge/v7.1.0-rc5/sched
+    verify.py --recipe scan_recipes/v7.2-rc7/sched.json --ksrc /home/lgk/linux \
+              --against knowledge/v7.2-rc7/sched
     verify.py ... --format json   # machine-readable
     verify.py ... --missing-only   # just the gaps (for the producer to action)
 """
@@ -44,6 +44,12 @@ import json
 import os
 import subprocess
 import sys
+
+# import scan for per-source claim checking (in-process, avoids re-running scan
+# via subprocess for each source — verify already runs scan once for the
+# workorder; claim checks use the same extractors directly on the recipe).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scan_recipes"))
+import scan as scan_mod  # noqa: E402
 
 
 def _run_scan(recipe, ksrc):
@@ -62,6 +68,24 @@ def _run_scan(recipe, ksrc):
     except json.JSONDecodeError:
         sys.exit(f"scan.py produced non-JSON:\n{proc.stdout[:500]}")
     return result
+
+
+def _check_claims(recipe_path, ksrc):
+    """薄壳:跑 scan.transcode 拿 claim_diff,返回 (gaps, extras)。
+    scan 已内置 claim 自检(recipe 清单 vs scan 扫出),verify 只读展示。
+    保留此函数为 test_extractors.TestClaimChecking 提供稳定入口。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    scan_path = os.path.join(here, "scan_recipes", "scan.py")
+    proc = subprocess.run(
+        [sys.executable, scan_path, "--recipe", recipe_path, "--ksrc", ksrc,
+         "--format", "json"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return [], []
+    result = json.loads(proc.stdout)
+    cd = result.get("claim_diff", {})
+    return cd.get("gaps", []), cd.get("extras", [])
 
 
 def _load_knowledge(kdir):
@@ -95,6 +119,11 @@ def verify(recipe, ksrc, kdir):
     if scan_result["summary"]["errors"]:
         # surface scan errors but keep going
         pass
+
+    # claim_diff: scan 自检产出(对照 recipe 清单 vs scan 扫出),verify 只展示
+    claim = scan_result.get("claim_diff", {})
+    claim_gaps = claim.get("gaps", [])
+    claim_extras = claim.get("extras", [])
 
     ksum, kmodule, kversion = _load_knowledge(kdir)
 
@@ -193,6 +222,23 @@ def verify(recipe, ksrc, kdir):
         if not detail_hit:
             extra.append(it)
 
+    # --- consumes format check: file:行号 是禁止的(行号跨版本漂移) ---
+    # PRODUCER §5: consumes 必须是 file:符号(函数/数组名,非行号)。
+    # 行号会让消费者引用失效。用 fix_consumes.py 可自动转。
+    consumes_line_refs = []
+    for fname in ("tunable.json", "readonly.json"):
+        fpath = os.path.join(kdir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        with open(fpath) as fh:
+            for dit in json.load(fh).get("items", []):
+                kn = dit.get("kernel_name", "")
+                for x in dit.get("consumes", []) or []:
+                    if not (isinstance(x, str) and ":" in x):
+                        continue
+                    _, _, tail = x.rpartition(":")
+                    if tail.isdigit():
+                        consumes_line_refs.append({"kn": kn, "ref": x, "file": fname})
     return {
         "module": kmodule,
         "version": kversion,
@@ -202,6 +248,9 @@ def verify(recipe, ksrc, kdir):
         "missing": missing,
         "extra": extra,
         "drifted": drifted,
+        "consumes_line_refs": consumes_line_refs,
+        "claim_gaps": claim_gaps,
+        "claim_extras": claim_extras,
         "scan_errors": scan_result["summary"]["errors"],
     }
 
@@ -244,6 +293,9 @@ def main(argv=None):
             out["extra"] = r["extra"]
         out["missing"] = r["missing"]
         out["drifted"] = r["drifted"]
+        if not args.missing_only:
+            out["claim_gaps"] = r.get("claim_gaps", [])
+            out["claim_extras"] = r.get("claim_extras", [])
         print(json.dumps(out, indent=2, ensure_ascii=False))
     else:
         print(f"[{r['module']} {r['version']}] "
@@ -269,7 +321,31 @@ def main(argv=None):
                 print(f"  {d['path']}")
                 print(f"    workorder kn: {d['workorder_kn']}  →  knowledge kn: {d['knowledge_kn']}")
                 print(f"    (param exists, not missing; stable identifier drifted — fix knowledge or scan)")
-        if not r["missing"] and not r["extra"] and not r["drifted"]:
+        if r.get("consumes_line_refs"):
+            print(f"\n=== CONSUMES LINE-REFS ({len(r['consumes_line_refs'])}) — uses file:行号, must be file:符号 ===")
+            for c in r["consumes_line_refs"][:20]:
+                print(f"  {c['kn']:30} {c['ref']}  (in {c['file']})")
+            if len(r["consumes_line_refs"]) > 20:
+                print(f"  ... +{len(r['consumes_line_refs'])-20} more")
+            print(f"  fix: python fix_consumes.py knowledge/{r['version']}/{r['module']}/tunable.json")
+        if r.get("claim_gaps"):
+            print(f"\n=== CLAIM GAPS ({len(r['claim_gaps'])}) — scan 扫到但 recipe 清单没列(补清单) ===")
+            for g in r["claim_gaps"][:20]:
+                if "error" in g:
+                    print(f"  source[{g['source']}] {g['locator']}: {g['error']}")
+                else:
+                    miss = g.get('missing_from_claim', [])
+                    print(f"  source[{g['source']}] {g['locator']} ({g.get('mechanism','')}): 清单漏 {len(miss)}: {miss}")
+            if len(r["claim_gaps"]) > 20:
+                print(f"  ... +{len(r['claim_gaps'])-20} more")
+        if r.get("claim_extras"):
+            print(f"\n=== CLAIM EXTRAS ({len(r['claim_extras'])}) — recipe 清单列了但 scan 没扫到(清单过时或 scan 漏扫) ===")
+            for e in r["claim_extras"][:20]:
+                extra = e.get('extra_in_claim', [])
+                print(f"  source[{e['source']}] {e['locator']} ({e.get('mechanism','')}): 清单多 {len(extra)}: {extra}")
+            if len(r["claim_extras"]) > 20:
+                print(f"  ... +{len(r['claim_extras'])-20} more")
+        if not r["missing"] and not r["extra"] and not r["drifted"] and not r.get("consumes_line_refs") and not r.get("claim_gaps") and not r.get("claim_extras"):
             print("\n✓ knowledge matches scan workorder exactly")
 
 

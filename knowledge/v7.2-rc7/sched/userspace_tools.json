@@ -1,0 +1,534 @@
+{
+  "module": "sched",
+  "version": "v7.2-rc7",
+  "_doc": "sched 域用户空间工具清单。读 man page 产出,非训练数据印象。每条 tool=命令名, function=干什么, key_options=关键参数(真读 man 后记下语义/默认值/约束), when_to_use=何时用(映射到 capability 的 when_applies 或 rule 的 symptom), kernel_alternative=该工具能替代/互补哪个 tunable(kernel_name 引用,boot-only 的标 no runtime), caveats=坑(权限/边界行为/版本差异)。工具不列优先级——消费者按场景选。v1/v2 兼容:lscgroup 是 cgroup v1 only,v7.2 v2 unified 上不可用改 systemd-cgls 或 ls /sys/fs/cgroup;cgroup-tools(cgcreate/cgset/cgexec)通过 -c scope/-b 部分适配 v2;cset 是 cpuset v1 接口工具,v2 上优先用 systemd-run --property=AllowedCPUs=。共 15 个工具(taskset/numactl/chrt/renice/nice/nproc/lscpu/systemd-run/lstopo/hwloc-ls/cset/cgcreate/cgset/cgexec/lscgroup)。",
+  "tools": [
+    {
+      "tool": "taskset",
+      "function": "设置或获取进程的 CPU 亲和性掩码,或以给定亲和启动命令。CPU 亲和性是调度器属性,把进程绑定到指定 CPU 子集。",
+      "key_options": [
+        {
+          "opt": "-p, --pid",
+          "semantics": "对已存在的 PID 操作,不启动新任务。可用 taskset -p pid 取掩码,taskset -p mask pid 设掩码。"
+        },
+        {
+          "opt": "-c, --cpu-list",
+          "semantics": "把 mask 解释为 CPU 数值列表而非位掩码,支持逗号分隔与范围。例:0,5,8-11、0-2,6、0-10:2(步长 N=0,2,4,6,8,10)。对已存在进程须 -p 与 -c 合用:taskset -pc cpu-list pid。"
+        },
+        {
+          "opt": "-a, --all-tasks",
+          "semantics": "对给定 PID 的所有任务(线程)设置或获取亲和。"
+        },
+        {
+          "opt": "(无选项) mask command",
+          "semantics": "默认行为:以给定亲和掩码运行新命令。掩码可十六进制(0x 可省)或 bitmask。例:0x00000001=CPU0、0x00000003=CPU0,1。"
+        }
+      ],
+      "when_to_use": "load-imbalance:把负载从打满 CPU 散到空闲 CPU;cache-locality:把同进程线程绑到同 LLC 域减少跨 LLC 漂移;numa-migration:把任务绑到目标 NUMA 节点的 CPU 上(配合 numactl --membind)。rule R2-load-spread-poor 调 migration_cost 之外,本工具是直接手段。",
+      "kernel_alternative": "isolcpus(housekeeping_isolcpus_setup,boot-only no runtime 反向:isolate 不跑任务,taskset 是正向 pin);sysctl_sched_migration_cost(互补:migration_cost 影响是否迁,taskset 强制不迁);cpuset cgroup(同语义但 cgroup 级,见 systemd-run)",
+      "caveats": "返回 0 仅表示 sched_setaffinity 成功,不保证已迁移(man 原文:仅保证不迁到掩码外 CPU)。如 kswapd 可设亲和但可能不立即迁移甚至永不迁移。kernel per-CPU 线程亲和无法设(如 ksoftirqd/0 设亲和返回 EINVAL)。改他人进程需 CAP_SYS_NICE,同用户进程可改。掩码对应不存在 CPU 时报错返回 1。"
+    },
+    {
+      "tool": "numactl",
+      "function": "控制进程或共享内存的 NUMA 策略(调度与内存放置)。策略被子进程继承,亦可对 tmpfs/hugetlbfs 文件设持久策略。",
+      "key_options": [
+        {
+          "opt": "--cpunodebind=nodes, -N",
+          "semantics": "只在指定 NUMA 节点的 CPU 上执行。nodes 可 N,N,N/N-N/+N(相对当前 cpuset)/!N-N(反选)/all/netdev:DEV/file:PATH/block:PATH/ip:HOST/pci:[seg:]bus:dev[:func]。"
+        },
+        {
+          "opt": "--physcpubind=cpus, -C",
+          "semantics": "只在指定物理 CPU 上执行。语义同 --cpunodebind 的 cpu 列表(+ 相对、! 反选、all)。注意 --cpubind(节点号)已废弃。"
+        },
+        {
+          "opt": "--membind=nodes, -m",
+          "semantics": "只从指定节点分配内存,不够则失败(硬限)。"
+        },
+        {
+          "opt": "--preferred=node, -p",
+          "semantics": "偏好从单节点分配,不够则回退其他节点。只接单节点号。"
+        },
+        {
+          "opt": "--preferred-many=nodes, -P",
+          "semantics": "偏好多节点,取离 local 最近的为最偏好。回退其他。"
+        },
+        {
+          "opt": "--interleave=nodes, -i",
+          "semantics": "交错分配策略,内存按节点轮询(round-robin);当前节点不够时回退。"
+        },
+        {
+          "opt": "--weighted-interleave=nodes, -w",
+          "semantics": "加权交错,按各节点权重比例分配(权重读 /sys/kernel/mm/mempolicy/weighted_interleave/node*)。"
+        },
+        {
+          "opt": "--localalloc, -l",
+          "semantics": "尽量在进程当前节点分配,不够回退。"
+        },
+        {
+          "opt": "--balancing, -b",
+          "semantics": "为进程开启内核 NUMA balancing(若内核支持)。仅可与 --membind 合用,否则忽略。"
+        },
+        {
+          "opt": "--all, -a",
+          "semantics": "取消默认 cpuset 感知,使后续策略可用全部 CPU/节点。"
+        },
+        {
+          "opt": "--show, -s",
+          "semantics": "显示当前进程的 NUMA 策略。"
+        },
+        {
+          "opt": "--hardware, -H",
+          "semantics": "显示系统可用节点清单(--cpu-compress 时显示 cpu 范围)。"
+        }
+      ],
+      "when_to_use": "numa-migration(rule R1-numa-migrate-excess):把任务和它的内存一起钉在目标 NUMA 节点,直接消除跨节点访问;cache-locality:把任务绑到 LLC 所在节点的 CPU。本工具是 NUMA 域最直接杠杆,比调 sysctl_numa_balancing scan_* 更强制。",
+      "kernel_alternative": "sysctl_numa_balancing(互补:balancing 是内核扫描决策,numactl 是用户显式 pin,两者并存需 --balancing 显式开启);sysctl_sched_migration_cost(互补:迁移门槛影响自然迁移决策);sysctl_numa_balancing_scan_period_min/scan_size(互补)",
+      "caveats": "需 NUMA policy aware 内核。command 不经 shell 执行,要用 shell 元字符需 sh -c 包裹(-- 之后的 -l 等会被 numactl 误解析,man 给出 -- 分隔)。为 hugetlbfs 文件设策略不可用(truncate 不能扩展)。老 --cpubind 接节点号非 CPU 号,已废弃,误用会语义错。--balancing 只对 --membind 有效,与 --interleave/--preferred 合用会被忽略。32 位架构对超大 shm 段可能无法完整 policied。"
+    },
+    {
+      "tool": "chrt",
+      "function": "设置或获取进程的实时调度属性(策略+优先级),或以给定属性启动命令。Linux 默认策略是 SCHED_OTHER。",
+      "key_options": [
+        {
+          "opt": "-f, --fifo",
+          "semantics": "SCHED_FIFO(FIFO,无时间片)。static priority 1-99。"
+        },
+        {
+          "opt": "-r, --rr",
+          "semantics": "SCHED_RR(轮转)。未指定策略时默认 SCHED_RR。priority 1-99。"
+        },
+        {
+          "opt": "-d, --deadline",
+          "semantics": "SCHED_DEADLINE(偶发任务截止时间调度,Linux 3.14+)。priority 必须为 0。须配 --sched-runtime/--sched-deadline/--sched-period,约束 runtime≤deadline≤period;chrt 在未指定 deadline 时复制 period 到 deadline,未指定 runtime 时复制 deadline 到 runtime——故至少须指定 --sched-period。"
+        },
+        {
+          "opt": "-o, --other",
+          "semantics": "SCHED_OTHER(分时,默认)。priority 0。"
+        },
+        {
+          "opt": "-b, --batch",
+          "semantics": "SCHED_BATCH(批处理,Linux 2.6.16+)。priority 必须为 0。"
+        },
+        {
+          "opt": "-i, --idle",
+          "semantics": "SCHED_IDLE(极低优先级,Linux 2.6.23+)。priority 必须为 0。"
+        },
+        {
+          "opt": "-T, --sched-runtime nanoseconds",
+          "semantics": "DEADLINE 的 runtime 参数;6.12+ 也作 SCHED_OTHER/BATCH 的自定义 slice 长度。"
+        },
+        {
+          "opt": "-P, --sched-period nanoseconds",
+          "semantics": "DEADLINE 的 period 参数。内核下限 100 毫秒。"
+        },
+        {
+          "opt": "-D, --sched-deadline nanoseconds",
+          "semantics": "DEADLINE 的 deadline 参数。"
+        },
+        {
+          "opt": "-R, --reset-on-fork",
+          "semantics": "设 SCHED_RESET_ON_FORK 标志(2.6.31+):子进程不继承特权策略(FIFO/RR 子进程重置为 OTHER,负 nice 子进程重置为 0)。开启后只有 CAP_SYS_NICE 才能重置。"
+        },
+        {
+          "opt": "-a, --all-tasks",
+          "semantics": "对给定 PID 的所有任务(线程)操作。"
+        },
+        {
+          "opt": "-p, --pid",
+          "semantics": "对已存在 PID 操作,不启动新任务。取:chrt -p PID;设:chrt -r -p 30 PID。"
+        },
+        {
+          "opt": "-m, --max",
+          "semantics": "显示各策略 min/max 有效优先级后退出。实测:FIFO/RR 1-99,OTHER/BATCH/IDLE/DEADLINE 0/0。"
+        }
+      ],
+      "when_to_use": "scheduling-latency(rule R3-task-latency):延迟敏感任务用 -f/-r 提到 RT 类避免被 CFS 抢占;rt-starvation(rule R4-rt-throttled):用 -d DEADLINE 给 RT 任务硬带宽保证,或 -b/-i 把后台批任务降级避免与 RT 抢;load-imbalance:配合 taskset 把 RT 任务绑到专属核避免 RT 抢占影响其他 CPU 上的 CFS。",
+      "kernel_alternative": "sysctl_sched_rt_runtime/sysctl_sched_rt_period(互补:RT 配额由 sysctl 限,chrt 是设策略入口);sysctl_sched_base_slice(互补:OTHER/BATCH 的 slice 自 6.12 可由 chrt -T 覆盖单任务);sysctl_sched_uclamp_util_min/max(互补:uclamp 是 util 钳位,chrt 是改调度类)",
+      "caveats": "需 CAP_SYS_NICE 才能改调度属性(任何用户可读)。未指定策略时默认 SCHED_RR(不是 OTHER,易误用)。SCHED_DEADLINE 的 runtime≤deadline≤period 不满足会失败;period 下限 100ms。-T 的 OTHER/BATCH 自定义 slice 需 Linux 6.12+。POSIX 仅 SCHED_FIFO/OTHER/RR 标准化,BATCH/IDLE/DEADLINE 非 POSIX。仅 SCHED_FIFO/RR 用 priority 1-99,其余策略 priority 必须为 0。"
+    },
+    {
+      "tool": "renice",
+      "function": "改变运行中进程的调度优先级(nice 值)。",
+      "key_options": [
+        {
+          "opt": "-n priority",
+          "semantics": "指定优先级。默认绝对设置(非 POSIX 相对);设 POSIXLY_CORRECT 环境变量后才是相对。建议用 --priority/--relative 显式消除歧义。"
+        },
+        {
+          "opt": "--priority priority",
+          "semantics": "绝对优先级(设为给定值)。无选项时默认此项。"
+        },
+        {
+          "opt": "--relative priority",
+          "semantics": "相对优先级(增减),等价于 POSIX 标准 -n。"
+        },
+        {
+          "opt": "-g, --pgrp",
+          "semantics": "后继参数解释为进程组 ID。"
+        },
+        {
+          "opt": "-p, --pid",
+          "semantics": "后继参数解释为 PID(默认)。"
+        },
+        {
+          "opt": "-u, --user",
+          "semantics": "后继参数解释为用户名或 UID。"
+        }
+      ],
+      "when_to_use": "scheduling-latency(rule R3-task-latency):延迟敏感任务 nice 调负(更优先)减少 wait;load-imbalance:对打满 CPU 的低优先级任务 nice 调高让出 CPU;rt-starvation:对后台批任务 nice 调到 19(SCHED_OTHER 范围内最低)避免抢 RT。",
+      "kernel_alternative": "sysctl_sched_base_slice(互补:base_slice 是时间片,nice 是优先级权重);sysctl_sched_uclamp_util_min/max(互补:uclamp 是 util 钳位,nice 是权重)",
+      "caveats": "-n 默认是绝对优先级(非 POSIX 相对),历史实现差异;要相对请设 POSIXLY_CORRECT 或用 --relative。非 root 用户只能改自己进程,且只能调高 nice 值(降优先级),不可逆(除非有 nice rlimit,Linux 2.6.12+)。范围 -20(最优先)到 19(最不优先),root 可设任意值。"
+    },
+    {
+      "tool": "nice",
+      "function": "以调整后的 niceness 启动命令(影响调度优先级)。无命令时打印当前 niceness。",
+      "key_options": [
+        {
+          "opt": "-n, --adjustment=N",
+          "semantics": "给 niceness 加 N。默认 10。范围 -20(最优先)到 19(最不优先)。"
+        }
+      ],
+      "when_to_use": "scheduling-latency(rule R3-task-latency):启动延迟敏感任务时直接 -n -5 提优先级;load-imbalance:启动后台批任务 -n 19 让步。和 renice 区别:nice 是启动时设,renice 改运行中进程。",
+      "kernel_alternative": "sysctl_sched_base_slice(互补)、sysctl_sched_uclamp_util_min/max(互补)",
+      "caveats": "shell 可能内置同名 nice 版本覆盖本命令,行为可能不同,查 shell 文档。非 root 不能调负(降 niceness)。默认调整 +10。仅启动时生效,后续要改用 renice。"
+    },
+    {
+      "tool": "nproc",
+      "function": "打印当前进程可用的处理单元数(可能小于在线处理器数,受亲和/cpuset 限制)。",
+      "key_options": [
+        {
+          "opt": "--all",
+          "semantics": "打印已安装处理器总数(不受当前进程亲和限制)。"
+        },
+        {
+          "opt": "--ignore=N",
+          "semantics": "若可能排除 N 个处理单元。"
+        }
+      ],
+      "when_to_use": "load-imbalance / cache-locality / numa-migration:跑脚本/并行度决策时知道可用核数;配合 taskset 后看可用核数变化验证亲和生效。rule R2/R5 验证阶段可用。",
+      "kernel_alternative": "(无,纯观察工具)",
+      "caveats": "返回的是当前进程可用的核数,不是系统总核数——若进程已 taskset/numactl/cpuset 限制,会返回受限后的数。要总核数用 --all。"
+    },
+    {
+      "tool": "lscpu",
+      "function": "从 sysfs、/proc/cpuinfo 与架构相关库(如 ppc 的 librtas)收集 CPU 架构信息:CPU 数、线程/核/socket、NUMA 节点、cache 与 cache 共享、家族/型号/bogoMIPS、字节序等。",
+      "key_options": [
+        {
+          "opt": "-e, --extended[=list]",
+          "semantics": "人类可读扩展表。可指定列如 -e=cpu,node。默认列可变。非终端输出始终是 Field: data\\n 格式。"
+        },
+        {
+          "opt": "-p, --parse[=list]",
+          "semantics": "易解析格式。无 list 时与旧版本兼容(双逗号分隔 cache 列);有 list 时 cache 列用冒号分隔。"
+        },
+        {
+          "opt": "-C, --caches[=list]",
+          "semantics": "显示 cache 详情(NAME/ONE-SIZE/LEVEL/TYPE 等)。可加列如 -C=+ALLOC-POLICY。"
+        },
+        {
+          "opt": "-c, --offline",
+          "semantics": "只显示离线 CPU(须配 -e/-p)。"
+        },
+        {
+          "opt": "-b, --online",
+          "semantics": "只显示在线 CPU(须配 -e/-p,是 -p 默认)。"
+        },
+        {
+          "opt": "-a, --all",
+          "semantics": "在线+离线都显示(-e 默认)。"
+        },
+        {
+          "opt": "-y, --physical",
+          "semantics": "显示物理 ID(core/socket 等)而非 lscpu 分配的逻辑 ID。物理 ID 不一定唯一或连续。"
+        },
+        {
+          "opt": "-J, --json",
+          "semantics": "JSON 输出(默认摘要或 --extended)。"
+        },
+        {
+          "opt": "-x, --hex",
+          "semantics": "CPU 集用十六进制掩码(如 ff),默认列表格式(如 0,1)。"
+        }
+      ],
+      "when_to_use": "load-imbalance / cache-locality / numa-migration:先看拓扑(NUMA 节点→CPU 映射、LLC 实例数与共享范围、SMT 兄弟核)再决定怎么 pin。rule R1/R2/R5 调参前先用 lscpu -e=cpu,node,core 看清 CPU↔LLC↔NUMA 关系;cache-locality 看每个 LLC 实例覆盖哪些 CPU 以决定聚合目标。",
+      "kernel_alternative": "(无,纯观察工具;对应 readonly 是 sd->level/sd->flags/domains 拓扑,但 lscpu 是用户态等价)",
+      "caveats": "默认终端输出会优化可读性可能变化;非终端(管道)始终 Field: data\\n 不优化——脚本里建议管道或 -p。cache size 自 v2.34 起按所有 CPU 汇总(v2.34 前按核,易混淆);cache ID 自 v2.37 跟内核不一定从 0 起。虚拟化环境反映 guest 配置非 host 物理拓扑。物理 ID(-y)不一定唯一/连续。"
+    },
+    {
+      "tool": "systemd-run",
+      "function": "在临时 .scope 或 .service 单元中运行命令;通过 --property= 设 cgroup 资源控制属性(CPUQuota=/CPUWeight=/AllowedCPUs=/Nice=/CPUAffinity= 等),是现代推荐方式替代 cgcreate/cgset/cgexec。",
+      "key_options": [
+        {
+          "opt": "--scope",
+          "semantics": "创建临时 .scope 单元而非默认 .service;由 systemd-run 自己作父进程,继承调用者环境;同步执行(等命令结束)。"
+        },
+        {
+          "opt": "--service-type=",
+          "semantics": "设服务类型(见 systemd.service Type=)。默认 simple。--scope 下无效。建议 --service-type=exec 确保命令成功启动才返回。"
+        },
+        {
+          "opt": "-p, --property=",
+          "semantics": "设 scope 或 service 单元的属性,格式同 systemctl set-property。CPU 相关可用:CPUQuota=(硬限,>100% 跨多 CPU)、CPUWeight=(份额,等价 cpu.weight)、AllowedCPUs=(绑核,等价 cpuset)、CPUAffinity=(绑核)、Nice=(nice 值)、StartupCPUWeight=。详见 systemd.resource-control(5)。"
+        },
+        {
+          "opt": "--slice=",
+          "semantics": "把新 .service/.scope 放入指定 slice(而非 system.slice / 用户 root slice)。"
+        },
+        {
+          "opt": "--slice-inherit",
+          "semantics": "把新单元放入 systemd-run 自身所在 slice(可与 --slice= 组合为子 slice)。"
+        },
+        {
+          "opt": "--nice=",
+          "semantics": "以指定 nice 级别运行(见 Nice= in systemd.exec(5))。"
+        },
+        {
+          "opt": "--uid=, --gid=",
+          "semantics": "以指定 UNIX 用户/组运行。"
+        },
+        {
+          "opt": "-r, --remain-after-exit",
+          "semantics": "服务进程退出后保留单元直到显式停止(便于收集运行时信息)。"
+        },
+        {
+          "opt": "-G, --collect",
+          "semantics": "完成后卸载单元(无论成功失败),等价 --property=CollectMode=inactive-or-failed。"
+        },
+        {
+          "opt": "--user",
+          "semantics": "对调用者的 service manager 而非系统 service manager。"
+        },
+        {
+          "opt": "--wait",
+          "semantics": "同步等待服务结束并显示运行时/CPU/内存/IO 计费信息。不可与 --scope/--no-block 合用。"
+        },
+        {
+          "opt": "--no-block",
+          "semantics": "不同步等启动完成,仅验证并入队。不可与 --wait 合用。"
+        }
+      ],
+      "when_to_use": "cgroup-cpu-share:用 CPUQuota= 设硬限(等价 cpu.max)、CPUWeight= 设份额(等价 cpu.weight)、AllowedCPUs= 绑核(等价 cpuset);rt-starvation:用 CPUQuota= 限 RT 任务带宽;load-imbalance:用 AllowedCPUs= 把 cgroup 限到部分 CPU;rule R4 / rule R2 的 cgroup 落地手段。",
+      "kernel_alternative": "cpu_max_write(CPUQuota= 是其用户态入口)、cpu_weight_write_u64(CPUWeight= 入口)、cpu_uclamp_min_write/cpu_uclamp_max_write(uclamp 需直接写 cgroup fs,systemd-run 无直接属性)、housekeeping_isolcpus_setup(boot-only no runtime:AllowedCPUs= 是运行时等价)",
+      "caveats": "默认 Type=simple,manager 在 fork 成功后即认为启动成功(execve 前就返回,命令可能没起来也算成功)——要确保命令真正启动用 --service-type=exec。$ 字符会被 manager 变量扩展,要禁用 --expand-environment=no(--scope 默认禁用)。--scope 与 --wait/--pty/--on-* 互斥。man 原文:--scope 同步执行且继承调用者环境(异步背景启动是 .service 模式)。CPUWeight=/CPUQuota= 等需内核 cgroup v2 unified hierarchy(本仓库 v7.2 默认)。"
+    },
+    {
+      "tool": "lstopo",
+      "function": "显示系统拓扑(NUMA/Package/Core/PU/Cache/PCI 层级)。lstopo 默认图形窗口(无 X 退 console),lstopo-no-graphics 与 hwloc-ls 是纯文本构建变体(选项完全一致)。图形用嵌套盒子表示资源包含关系,Cache/NUMA 用特殊布局(画在 Core/PU 之上而非包含)。",
+      "key_options": [
+        {
+          "opt": "--of <format>",
+          "semantics": "强制输出格式。可选 default/window/console/ascii/tikz或tex/fig/svg/cairosvg/nativesvg/pdf/ps/png/synthetic/xml。无 --of 时按文件名后缀推断(.png→PNG),无文件名时 DISPLAY 在则开窗否则 console。"
+        },
+        {
+          "opt": "-i <path|specification>, --input",
+          "semantics": "不从本机发现拓扑,改从 <path> 读(XML 文件/-标准输入/含 Linux 拓扑文件的目录/x86 cpuid dump 目录/tarball)。或用 synthetic specification(如 'node:2 pu:3') 模拟假拓扑,spec 必须以 PU 数结尾。"
+        },
+        {
+          "opt": "-p --physical / -l --logical",
+          "semantics": "-p 显示 OS/物理索引(P# 前缀),-l 显示 hwloc 逻辑索引(L# 前缀)。默认 PU 与 NUMA 节点两者都显示,Core/Die/Package 只显示逻辑索引,其他类型不显示。"
+        },
+        {
+          "opt": "-c --cpuset / -C --cpuset-only",
+          "semantics": "-c 显示每个对象的 cpuset 字符串;-C 只显示 cpuset 不显示其他对象信息。"
+        },
+        {
+          "opt": "--cpuset-output-format <hwloc|list|taskset> (--cof)",
+          "semantics": "改 cpuset 显示格式。hwloc 默认;list=逗号分隔数字/范围(如 2,4-5,8);taskset=taskset 兼容(hex 位掩码)。需配合 --cpuset 或 --cpuset-only,否则隐含 --cpuset。"
+        },
+        {
+          "opt": "--pid <pid>",
+          "semantics": "显示进程 <pid> 视角的拓扑(其 allowed set 受该进程 cgroup/cpuset 限制)。同时标记该进程当前 CPU 与内存 binding(图形 Green,console verbose 追加 (binding))。pid=0 显示 lstopo 自身 binding。"
+        },
+        {
+          "opt": "--disallowed / --allow <all|local|0xff|nodeset=0xf0>",
+          "semantics": "--disallowed 显示被 cgroup 等行政限制排除的对象(Offline PU 仍忽略)。--allow 进一步改 allowed set:local=当前进程可用,all=全部,bitmap=指定 PU 集,nodeset=0x.. 指定 NUMA 节点集。"
+        },
+        {
+          "opt": "--restrict <cpuset|nodeset=<nodeset>|binding>",
+          "semantics": "把拓扑限制到给定 cpuset/nodeset/当前进程 binding。会移除被排除的 PU/NUMA 节点及其无子节点的父对象。注意:限制后会改变很多对象的逻辑索引。binding 需配合 --thissystem。"
+        },
+        {
+          "opt": "--filter <type>:<kind>",
+          "semantics": "过滤对象类型。kind=none(移除)/all(保留)/structure(有结构时保留)/important(仅 I/O)。--no-smt=--filter PU:none,--no-caches=--filter cache:none。"
+        },
+        {
+          "opt": "--ps --top",
+          "semantics": "在拓扑里显示现有进程为 Misc 对象。只显示被限制到部分 CPU 的进程(全 CPU 不显示),Linux 不显示内核线程。进程多时输出难读,改用 hwloc-ps。"
+        },
+        {
+          "opt": "--children-order <order>",
+          "semantics": "改 Memory/I/O/Misc 子对象相对 CPU 子的顺序。默认 memory:above,io:right,misc:right(NUMA 在 CPU 上、I/O 与 Misc 在右)。plain=严格按树形(NUMA 与 CPU 并列)。可加 :horiz/:vert/:rect 强制布局。"
+        },
+        {
+          "opt": "-v --verbose / -q --quiet / -s --silent",
+          "semantics": "-v 加详情(含 binding 标注),-q/-s 减详情。更详细的对象信息用 hwloc-info。"
+        }
+      ],
+      "when_to_use": "load-imbalance / cache-locality / numa-migration:图形化看清 NUMA→LLC→Core→PU 层级、Cache 共享范围、NUMA 距离矩阵后再决定 pin 策略;rule R1/R2/R5 调参前先用 lstopo 看 LLC 实例覆盖哪些 CPU、NUMA 节点边界。--pid <pid> 看目标任务受 cgroup/cpuset 限制后的实际可用 CPU 集(binding 标注);--ps 看哪些进程已被限制(诊断 cgroup 隔离生效与否)。",
+      "kernel_alternative": "(无,纯观察工具;对应 readonly 是 sd->level/sd->flags/sched_domain 拓扑,lstopo 是用户态等价;但 lstopo --disallowed 能显示 cgroup 限制对 allowed set 的影响,间接关联 cpu_max_write/cpuset)",
+      "caveats": "图形输出依赖编译时支持(cairo/svg/pdf/ps/png 需对应库);无图形构建用 lstopo-no-graphics 或 hwloc-ls。console 模式无颜色,Green/White/Red 标注只在 verbose 文本/图形中体现。--restrict 后逻辑索引会变,跨机器复用 XML 拓扑要 --thissystem。--allow bitmap 的 hex 字符串按 PU 物理序解释。lstopo 用 4/3 宽高比矩形启发式,忽略 NUMA 物理距离/拓扑(ring/mesh)。"
+    },
+    {
+      "tool": "hwloc-ls",
+      "function": "lstopo 的纯文本构建变体。man 原文:hwloc-ls is identical to lstopo-no-graphics。永远走文本输出(console/ascii/xml/synthetic),无图形窗口依赖,无 cairo/svg/pdf/ps/png。选项与 lstopo 完全一致。",
+      "key_options": [
+        {
+          "opt": "(同 lstopo)",
+          "semantics": "所有 --of/-i/-p/-l/-c/-C/--pid/--disallowed/--allow/--restrict/--filter/--ps/--children-order/-v/-q/-s 等选项语义与 lstopo 完全一致。唯一区别:--of 的 window/fig/svg/cairosvg/nativesvg/pdf/ps/png 等图形格式不可用(未编译进此变体),强制用 --of console 或 --of ascii 或文件名 .xml/.synthetic 等。"
+        },
+        {
+          "opt": "--of console (默认)",
+          "semantics": "hwloc-ls 默认输出 console 文本摘要到 stdout(不像 lstopo 会尝试开窗)。管道/重定向时与终端行为一致。"
+        }
+      ],
+      "when_to_use": "load-imbalance / cache-locality / numa-migration:与 lstopo 同,但用于无 X/SSH/容器等无图形环境;脚本管道里取拓扑用 hwloc-ls 更稳定(不会因 DISPLAY 误开窗)。rule R1/R2/R5 同 lstopo。",
+      "kernel_alternative": "(无,纯观察工具;同 lstopo,对应 readonly sd->level/sd->flags)",
+      "caveats": "与 lstopo 选项完全一致但图形格式不可用。man 原文 identical to lstopo-no-graphics——若脚本里同时要图形+文本,直接用 lstopo --of 切换即可,不必同时装两个。其他 caveats 同 lstopo。"
+    },
+    {
+      "tool": "cset",
+      "function": "管理 Linux cpuset(cpuset v1 接口)。Python 应用,挂载 cpusets 文件系统并操作。3 个子命令:shield(supercommand 建 root/system/user 三 cpuset 实现 CPU 屏蔽)、proc(在 cpuset 里跑/移进程)、set(建/改/毁 cpuset)。比 taskset 强(管多 cpuset 树+移动已存在进程+内核线程)。需 root。",
+      "key_options": [
+        {
+          "opt": "cset shield [--cpu=CPUSPEC] [--kthread=on|off] [--shield/--unshield --pid=PIDSPEC] [--exec CMD] [--reset]",
+          "semantics": "supercommand:建 root/system/user 三 cpuset。--cpu 指定 user(shielded) 集,其余进 system。CPU0 默认 system、其余默认 user。--kthread=on 把非 per-CPU 内核线程也搬 system。--shield --pid=PIDSPEC 把已运行进程搬进 shield;--unshield 搬出。--exec 在 shield 里跑新命令。--reset 毁 shield 把任务搬回 root。PIDSPEC 支持逗号分隔与范围(1,2,600-700)。"
+        },
+        {
+          "opt": "cset set [--cpu=CPUSPEC] [--mem=MEMSPEC] [--set=NAME] [-l/--list] [-d/--destroy] [--cpu_exclusive] [--mem_exclusive] [-r/--recurse]",
+          "semantics": "建/改/毁任意 cpuset。CPUSPEC=逗号分隔+范围(1,3,5-7)。MEMSPEC 同语法对内存节点(非 NUMA 机只能 0)。cpuset 树形,子 cpuset 的 CPU/MEM 必须是父的子集,违反报 'Permission denied'(cryptic)。--cpu_exclusive/--mem_exclusive 标记独占。--destroy 时任务搬回父 cpuset。可用路径(/one/two)或唯一名指定。"
+        },
+        {
+          "opt": "cset proc [--exec|--move|--list] [--pid=PIDSPEC] [--fromset=FROM] [--toset=TO] [--threads] [-k/--kthread] [--force]",
+          "semantics": "管 cpuset 里的进程。--exec NAME CMD 在 cpuset NAME 里跑 CMD;--move PIDSPEC TOSET 搬 PID;--list --set NAME 列 cpuset 里的任务。--threads 自动带上 PIDSPEC 进程的所有线程。-k/--kthread 搬 unbound 内核线程(bound kernel thread 搬走可能 hang,man 原文 Caution)。--fromset 限定源 cpuset。--force 强制搬所有(含 bound,危险)。"
+        },
+        {
+          "opt": "cset --tohex <CPUSPEC>",
+          "semantics": "把 CPUSPEC(如 1,3,5-7)转 hex 数值输出。用于设 IRQ smp_affinity 掩口。"
+        },
+        {
+          "opt": "cset --machine / -m",
+          "semantics": "所有操作输出 machine-readable 格式(易解析)。"
+        },
+        {
+          "opt": "cset --log <filename>",
+          "semantics": "把当前运行日志写文件,调试用。"
+        }
+      ],
+      "when_to_use": "load-imbalance(rule R2-load-spread-poor):用 shield 把延迟敏感任务独占一组 CPU、其余进 system 集避免干扰——比 taskset 强在自动管理三 cpuset + 内核线程隔离;cache-locality(rule R5-llc-locality-poor):用 set 建 cpuset 把同进程线程绑到同 LLC 域;numa-migration(rule R1-numa-migrate-excess):用 set --cpu + --mem 把任务和内存一起钉 NUMA 节点(等价 numactl 但 cgroup 级);rt-starvation:用 shield 给 RT 任务专属核。cset 是 cpuset v1 接口工具,v7.2 cgroup v2 unified 上需确认 cpuset legacy controller 挂载或改用 systemd-run AllowedCPUs=。",
+      "kernel_alternative": "housekeeping_isolcpus_setup(boot-only no runtime 反向:isolcpus 隔离不跑任务,cset shield 是正向分 CPU 给任务);sysctl_sched_migration_cost(互补:migration_cost 影响自然迁移决策,cset cpuset 强制不迁);cpu_max_write/cpuset cgroup(cset 是 cpuset 用户态入口,v2 上 cpuset 走 cgroup.subtree_cpus 非独立 fs)",
+      "caveats": "需 root(man 原文:需挂载 cpusets 文件系统,非 root 无权限)。cset 是 cpuset v1 接口工具,v7.2 默认 cgroup v2 unified hierarchy 上 cpuset controller 是 cgroup 内嵌的(非独立 cpuset fs),cset 可能需手动挂载 cpuset legacy 或不可用——优先用 systemd-run --property=AllowedCPUs= 替代。--force 搬 bound kernel thread 可能导致系统 hang(man 原文 Caution)。cpuset 规则违反(子集含父外 CPU)报 cryptic 'Permission denied';MEMSPEC 违反报 'No space left on device'。--sysset/--userset 改名后所有后续调用都要带同名参数。cset 实测 --help 仅列 shield/proc/set 三个子命令(无 mem/subset,印象里的 6 个是误记)。"
+    },
+    {
+      "tool": "cgcreate",
+      "function": "创建新 cgroup。libcgroup 工具。可用传统 cgroup v1 路径(默认走 systemd 委派层级)或 -c 创建 systemd scope(适配 v2 unified)。",
+      "key_options": [
+        {
+          "opt": "-g <controllers>:<path>",
+          "semantics": "定义要建的 cgroup。controllers 是控制器列表(逗号分隔),'*' = 所有已挂载控制器。path 是相对路径。可多次用建多个 cgroup。例:-g *:student devices:teacher。"
+        },
+        {
+          "opt": "-c, --scope",
+          "semantics": "建 systemd scope 而非传统 cgroup。-g 后路径必须是 <slice-name>.slice/<scope-name>.scope 形式。slice 不存在 systemd 自动建。libcgroup 在 scope 的 cgroup.procs 放一个 idle 进程(除非 -p)。适配 cgroup v2 unified hierarchy 的方式。"
+        },
+        {
+          "opt": "-p, --pid=pid",
+          "semantics": "把指定 pid 移入 -c 建的 scope。必须与 -c 合用。"
+        },
+        {
+          "opt": "-b",
+          "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根层级构造。直接写 cgroup 根(v1 风格)。"
+        },
+        {
+          "opt": "-S, --setdefault",
+          "semantics": "把 -c 建的 scope 设为 libcgroup 默认 scope。后续 libcgroup 工具用此 scope 拼 cgroup 路径。配合 -b 用。"
+        },
+        {
+          "opt": "-a <agid>:<auid>",
+          "semantics": "设 cgroup 控制文件(参数文件)的 user:group 拥有者。这些用户可设子系统参数与建子 cgroup。默认继承父 cgroup。"
+        },
+        {
+          "opt": "-t <tuid>:<tgid>",
+          "semantics": "设 tasks 文件的 user:group 拥有者。这些用户可把任务加入此 cgroup。默认继承父。"
+        },
+        {
+          "opt": "-f, --fperm=mode / -d, --dperm=mode / -s, --tperm=mode",
+          "semantics": "设控制文件/目录/tasks 文件权限(八进制如 775)。注意 -f/-s 的实际权限被当前 owner 权限作 umask(777 会把 group/other 权限设成 owner 的)。"
+        }
+      ],
+      "when_to_use": "cgroup-cpu-share:建 cgroup 给 cpu.max/cpu.weight 落地(等价 systemd-run 但更底层、可批量建);rt-starvation:建 cgroup 给 fair_server/rt_group 落地。-c 是 v7.2 cgroup v2 unified 上的推荐路径(走 systemd scope),-b 是 v1 风格直接写根。rule R4 / rule R2 的 cgroup 落地手段之一(替代 systemd-run,适合静态配置而非临时跑命令)。",
+      "kernel_alternative": "cpu_max_write(cgcreate 建 cgroup 后写 cpu.max)、cpu_weight_write_u64(写 cpu.weight)、cpu_uclamp_min_write/cpu_uclamp_max_write(写 cpu.uclamp.{min,max})、setup_rt_group_sched(boot-only no runtime:rt_group_sched 开了才有 cgroup 级 RT 限额)",
+      "caveats": "v7.2 cgroup v2 unified 默认上:传统 -g 不带 -c 走 systemd 委派层级(默认在 system.slice 或用户 root slice 下),要直接写根用 -b。man 不像 lscgroup 标 'v1 only',libcgroup 已通过 -c scope 部分适配 v2。需 root 建 cgroup。-c 的 scope 名必须严格 <slice>.slice/<scope>.scope 形式。权限 mode 用八进制。-f/-s 实际权限受 owner 当前权限 umask。CGROUP_LOGLEVEL 环境变量控日志(DEBUG/INFO/WARNING/ERROR)。配 /etc/cgconfig.conf 与 cgexec 配套用。"
+    },
+    {
+      "tool": "cgset",
+      "function": "设置已存在 cgroup 的参数(写控制文件)。libcgroup 工具。等价直接 echo > /sys/fs/cgroup/.../<file>。",
+      "key_options": [
+        {
+          "opt": "-r <name=value>",
+          "semantics": "定义要写的控制文件名与值。可多次用同时写多个参数。例:-r cpuset.cpus=0-1 student。"
+        },
+        {
+          "opt": "-b",
+          "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根构造。直接写 cgroup 根(v1 风格)。"
+        },
+        {
+          "opt": "--copy-from <source_cgroup_path>",
+          "semantics": "把源 cgroup 的所有参数复制到目标 cgroup。源/目标都可作为参数多次指定。"
+        },
+        {
+          "opt": "<cgroup_path> ...",
+          "semantics": "目标 cgroup 路径,可多次指定同时设多个 cgroup。"
+        }
+      ],
+      "when_to_use": "cgroup-cpu-share:改 cgroup 的 cpu.max/cpu.weight/cpu.uclamp.{min,max}(等价 systemd-run --property= 但对已存在 cgroup 而非临时单元);rt-starvation:改 fair_server/runtime 或 cgroup 级 RT 限额;load-imbalance:改 cpuset.cpus(若 cgroup 走 cpuset controller)。rule R4 / rule R2 的 cgroup 参数修改手段之一。",
+      "kernel_alternative": "cpu_max_write(cgset -r cpu.max=quota period 是其用户态入口)、cpu_weight_write_u64(-r cpu.weight=N)、cpu_uclamp_min_write/cpu_uclamp_max_write(-r cpu.uclamp.min=N)、sched_cache_enable_fops(若 cgroup 级有 llc_balancing 控制文件)、sysctl_sched_rt_runtime/sysctl_sched_rt_period(互补:全局 sysctl,cgset 是 cgroup 级)",
+      "caveats": "v7.2 cgroup v2 unified 上:控制文件名是 v2 风格(cpu.max/cpu.weight/cpu.uclamp.min),v1 风格名(cpu.cfs_quota_us/cpu.shares)在 v2 上不可写。-b 直接写根需 root。CGROUP_LOGLEVEL 环境变量控日志。等价直接 echo > 文件,cgset 只是批量+多 cgroup 同时设的便利层。改 cgroup 参数需对该 cgroup 控制文件有写权限(root 或 cgroup owner)。"
+    },
+    {
+      "tool": "cgexec",
+      "function": "在指定 cgroup 里跑命令。libcgroup 工具。等价 systemd-run --property= 但走 libcgroup/cgrules.conf 路径而非 systemd 单元。",
+      "key_options": [
+        {
+          "opt": "-g <controllers>:<path>",
+          "semantics": "指定命令在哪个 cgroup 跑。controllers 是控制器列表(逗号分隔),'*' = 所有已挂载。可多次用指定多个 cgroup。无 -g 时按 /etc/cgrules.conf 自动分配。"
+        },
+        {
+          "opt": "-b",
+          "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根构造。直接写根(v1 风格)。"
+        },
+        {
+          "opt": "--sticky",
+          "semantics": "cgred daemon(cgrulesengd 进程)不修改命令及其子任务的 cgroup。无此选项时 daemon 不改主任务但会按 /etc/cgrules.conf 改子任务。"
+        },
+        {
+          "opt": "-r",
+          "semantics": "替换 systemd scope 的 idle 进程为任务命令(配合 -c scope 用,见 cgcreate -c)。"
+        },
+        {
+          "opt": "command [arguments]",
+          "semantics": "要跑的命令与参数。"
+        }
+      ],
+      "when_to_use": "cgroup-cpu-share:把命令直接跑在指定 cgroup(等价 cgcreate+cset proc+exec 但一步到位);rt-starvation:把 RT 任务跑在限额 cgroup;load-imbalance:把任务跑在 cpuset cgroup(限 CPU 集)。rule R4 / rule R2 的 cgroup 落地手段之一(适合一次性命令,长期服务用 systemd-run)。无 -g 时按 /etc/cgrules.conf 自动分配(需先配 cgrulesengd daemon)。",
+      "kernel_alternative": "cpu_max_write(cpu.max 已设的 cgroup,cgexec -g 把任务加入)、cpu_weight_write_u64(cpu.weight 已设的 cgroup)、cpu_uclamp_min_write/cpu_uclamp_max_write(uclamp 已设)、housekeeping_isolcpus_setup(boot-only no runtime:cpuset cgroup 是运行时等价)",
+      "caveats": "v7.2 cgroup v2 unified 上:cgroup 路径需 v2 风格。-g 路径不存在会按 /etc/cgconfig.conf spec 建(无 spec 用内核默认值)。--sticky 仅在 cgrulesengd daemon 运行时有效。man 不像 lscgroup 标 'v1 only',libcgroup 已部分适配 v2(通过 -b 直接写根或走 cgrules.conf)。CGROUP_LOGLEVEL 环境变量控日志。优先考虑 systemd-run(现代推荐,cgcreate man 自己也提 -c scope 替代)。"
+    },
+    {
+      "tool": "lscgroup",
+      "function": "列所有 cgroup 或指定 cgroup 的子组。libcgroup 工具。",
+      "key_options": [
+        {
+          "opt": "-g <controllers>:<path> (或无选项位置参数)",
+          "semantics": "列指定控制器+路径下的子 cgroup。无此参数时列所有层级所有 cgroup。例:-g cpu:/ 列含 cpu 控制器的所有 cgroup;-g cpu:/student 列 cpu:/student 下的子组。"
+        },
+        {
+          "opt": "(无)",
+          "semantics": "无 -g 时列所有层级所有 cgroup。"
+        }
+      ],
+      "when_to_use": "cgroup-cpu-share:列出已建 cgroup 看 cpu.max/cpu.weight 配置(配合 cgget 读参数);load-imbalance:列 cpuset cgroup 看绑核分布。rule R4 / rule R2 验证阶段:看 cgroup 是否真的建好、子组分布。man 原文 'lscgroup is currently supported on cgroups v1 only'——v7.2 cgroup v2 unified 上不可用,改用 systemd-cgls 或 ls /sys/fs/cgroup/。",
+      "kernel_alternative": "(无,纯观察工具;对应 readonly 是 /sys/fs/cgroup 树)",
+      "caveats": "man 原文明确 'lscgroup is currently supported on cgroups v1 only'。v7.2 cgroup v2 unified hierarchy 默认上不可用——改用 systemd-cgls(列 systemd 单元对应的 cgroup)或直接 ls /sys/fs/cgroup/ 替代。CGROUP_LOGLEVEL 环境变量控日志。lscgroup 是 v1 时代工具,v2 上属 deprecated。"
+    }
+  ]
+}

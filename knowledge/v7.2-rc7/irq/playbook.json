@@ -1,7 +1,7 @@
 {
   "module": "irq",
   "version": "v7.2-rc7",
-  "_doc": "irq 流程层。把 irq 当中断子系统专家。playbook 供弹药(能力+规则+判据+杠杆族+交互),不强制走哪条路。query.py --mode 只决定展示哪部分,真正推理是消费者 LLM 自己的行为。所有 lever/observe 引用用 kernel_name 或 path 锚定现有 tunable/readonly,不复制参数详情(避免冗余+版本漂移)。阈值是经验值非源码硬约束。irq 调优三大维度:中断亲和性(per-irq 绑核)、中断调试/恢复(spurious 检测/misrouted 修复/轮询)、NUMA 局部性(node 配 affinity)。per-irq 参数 path 含 <irqN> 占位符,消费者需代入实际中断号(从 /proc/interrupts 取 IRQ 行号)。",
+  "_doc": "irq 流程层。把 irq 当中断子系统专家。playbook 供弹药(能力+规则+判据+杠杆族+交互),不强制走哪条路。query.py --mode 只决定展示哪部分,真正推理是消费者 LLM 自己的行为。所有 lever/observe 引用用 kernel_name 或 path 锚定现有 tunable/readonly,不复制参数详情(避免冗余+版本漂移)。阈值是经验值非源码硬约束。irq 调优三大维度:中断亲和性(per-irq 绑核)、中断调试/恢复(spurious 检测/misrouted 修复/轮询)、NUMA 局部性(node 配 affinity)。per-irq 参数 path 含 <irqN> 占位符,消费者需代入实际中断号(从 /proc/interrupts 取 IRQ 行号)。 v7.2 增量:新增 userspace_tools 节——irq 域用户态工具清单(lspci/lscpu/numactl/lstopo/hwloc-ls/watch + /proc/irq/N/smp_affinity 与 _list 裸文件操作),读 man page 产出非印象,补全'内核参数→中断落地'的最后一公里。irq 域专用工具(irqbalance/irqtop/irqstat)本机未装未读,核心写亲和靠裸 procfs。",
   "modes": {
     "intelligent": {
       "description": "把 irq 当专家。消费者靠 capabilities + observation_map + thresholds + leverage_map 推理下一步读什么、判什么、动哪个参数。LLM 自主决策,playbook 只提供专家方法论与映射,不写死步骤。",
@@ -209,6 +209,315 @@
     "mutex": [
       "smp_affinity 与 smp_affinity_list:同物异格式,改任一即可,别同时设(语义非互斥但操作冗余)。",
       "AFFINITY_MANAGED/PER_CPU 中断:对 smp_affinity 写返回 -EPERM,这些中断由内核/driver 管理不可用户态改(查 effective_affinity 前先试 cat)。"
+    ]
+  },
+  "userspace_tools": {
+    "_doc": "irq 域用户空间工具清单。读 man page 产出,非训练数据印象。每条 tool=命令名, function=干什么, key_options=关键参数(真读 man 后记下语义/默认值/约束), when_to_use=何时用(映射到 irq capability 的 when_applies 或 rule 的 symptom), kernel_alternative=该工具能替代/互补哪个 tunable(kernel_name 引用,boot-only 的标 no runtime), caveats=坑(权限/边界行为/版本差异)。工具不列优先级——消费者按场景选。irq 域专用工具少(irqbalance/irqtop/irqstat/set_irq_affinity.sh 本机未装未读),核心写亲和是裸文件操作 echo mask > /proc/irq/N/smp_affinity(列 /proc/irq/N/smp_affinity 写操作条目),通用观察工具(lspci/lscpu/numactl/lstopo/hwloc-ls/watch)在 irq 域重新映射到 irq capability。共 8 条(lspci/lscpu/numactl/lstopo/hwloc-ls/watch + /proc/irq/N/smp_affinity 写操作 + /proc/irq/N/smp_affinity_list 写操作)。",
+    "tools": [
+      {
+        "tool": "lspci",
+        "function": "列出所有 PCI 设备(BDF 地址、vendor/device、class、kernel driver、NUMA 节点)。",
+        "key_options": [
+          {
+            "opt": "-v / -vv / -vvv",
+            "semantics": "递增加详细度。-vv 含所有有用字段,-vvv 含全部可解析字段(含 undefined memory region)。"
+          },
+          {
+            "opt": "-k",
+            "semantics": "显示内核驱动当前处理该设备 + 能处理该设备的内核模块。-v 普通模式默认开。仅 Linux 2.6+。"
+          },
+          {
+            "opt": "-mm",
+            "semantics": "机器可读格式,易解析脚本用。每设备一段记录,tag:value 用 tab 分隔。"
+          },
+          {
+            "opt": "-nn",
+            "semantics": "vendor/device 编码同时显示数字与名字。"
+          },
+          {
+            "opt": "-s [[[[<domain>:]:]<bus>]:][<device>][.[<func>]]",
+            "semantics": "按 slot 选设备,各段可省略或 *。例:-s 0: 选 bus 0 全设备,-s 0.3 选所有 bus 上 device 0 func 3。"
+          },
+          {
+            "opt": "-d [<vendor>]:[<device>]:[<class>[:<prog-if>]]",
+            "semantics": "按 vendor/device/class ID 选,hex 数字,可省略或 *。"
+          },
+          {
+            "opt": "-t",
+            "semantics": "树状显示 bus/bridge/device 层级。"
+          },
+          {
+            "opt": "-D",
+            "semantics": "始终显示 PCI domain 号(默认仅 domain 0 时省略)。"
+          },
+          {
+            "opt": "NUMANode tag(仅 -vmm/-vm 输出)",
+            "semantics": "在 -vmm 机器可读格式里每设备记录含 NUMANode tag(仅 Linux),即设备所连 NUMA 节点号。是 lspci 查询 PCI 设备 NUMA 节点的入口(判网卡/设备中断局部性前置)。"
+          }
+        ],
+        "when_to_use": "irq-numa-locality(rule R4-numa-irq-locality):定位网卡/设备所连 NUMA 节点(读 -vmm 输出的 NUMANode tag),配 /proc/irq/<irqN>/node 与 /proc/irq/<irqN>/effective_affinity 判中断是否跨节点处理;irq-affinity-tuning(rule R1-irq-concentrated):多队列网卡(BDF + NUMANode)+ /proc/interrupts 行匹配 IRQ 号定位是哪个网卡哪队列中断集中某核。lspci -vmm 输出含 Driver/Module tag 可顺带确认网卡驱动(进而看驱动预期队列-核对应,配 affinity_hint)。",
+        "kernel_alternative": "(无,纯观察工具;对应 readonly 是 irq_node_proc_show/irq_effective_aff_proc_show,但 lspci -vmm 的 NUMANode 是用户态 PCI 层信息源,与 /proc/irq/<irqN>/node 互补:前者是 PCI 设备拓扑所连节点,后者是 irq_desc 分配节点,两者可能不等,见 README 边界)",
+        "caveats": "访问部分 PCI 配置空间受限需 root,非 root 看不到的字段标 <access denied>。NUMANode tag 仅 -vmm/-vm 机器可读格式输出有(普通 -v 不显示),要查 NUMA 节点必加 -mm。-xxx/-xxxx 读全配置空间仅 root(部分设备读取会 crash,man 原文'probably doesn't violate PCI standard but very stupid')。Bus-centric(-b)显示的是 PCI bus 视角的 IRQ 号(可能不同于内核视角)。DNS 查询(-q/-qq)需联网,自动脚本慎用避免过载 pci-ids 数据库。"
+      },
+      {
+        "tool": "lscpu",
+        "function": "从 sysfs、/proc/cpuinfo 与架构相关库(如 ppc 的 librtas)收集 CPU 架构信息:CPU 数、threads/cores/sockets、NUMA 节点、cache 与 cache 共享、family/model/bogoMIPS、字节序等。",
+        "key_options": [
+          {
+            "opt": "-e, --extended[=list]",
+            "semantics": "人类可读扩展表。可指定列如 -e=cpu,node。默认列可变。非终端输出始终是 Field: data\\n 格式。"
+          },
+          {
+            "opt": "-p, --parse[=list]",
+            "semantics": "易解析格式。无 list 时与旧版本兼容(双逗号分隔 cache 列);有 list 时 cache 列用冒号分隔。"
+          },
+          {
+            "opt": "-C, --caches[=list]",
+            "semantics": "显示 cache 详情(NAME/ONE-SIZE/LEVEL/TYPE 等)。可加列如 -C=+ALLOC-POLICY。"
+          },
+          {
+            "opt": "-c, --offline",
+            "semantics": "只显示离线 CPU(须配 -e/-p)。"
+          },
+          {
+            "opt": "-b, --online",
+            "semantics": "只显示在线 CPU(须配 -e/-p,是 -p 默认)。"
+          },
+          {
+            "opt": "-a, --all",
+            "semantics": "在线+离线都显示(-e 默认)。"
+          },
+          {
+            "opt": "-y, --physical",
+            "semantics": "显示物理 ID(core/socket 等)而非 lscpu 分配的逻辑 ID。物理 ID 不一定唯一或连续。"
+          },
+          {
+            "opt": "-J, --json",
+            "semantics": "JSON 输出(默认摘要或 --extended)。"
+          },
+          {
+            "opt": "-x, --hex",
+            "semantics": "CPU 集用十六进制掩码(如 ff),默认列表格式(如 0,1)。注意 v2.30 前带 0x 前缀。"
+          }
+        ],
+        "when_to_use": "irq-affinity-tuning(rule R1-irq-concentrated)/irq-numa-locality(rule R4-numa-irq-locality):设 smp_affinity 前先用 lscpu -e=cpu,node,core 看清 CPU↔NUMA 节点↔core 关系,决定把中断绑到哪个 node 的哪些核(让 effective_affinity 落在目标 node);-x 输出 hex 掩码格式可直接用作 /proc/irq/N/smp_affinity 写入值(注意 hex 顺序与 taskset/cpulist 不同,-x 是位掩码低位=CPU0);-C 看 LLC 共享范围(同 LLC 内绑核不影响中断吞吐)。验证:绑后再 lscpu -e=cpu,node 看核属哪个 node 与 /proc/irq/N/node 对照。",
+        "kernel_alternative": "(无,纯观察工具;对应 readonly 是 irq_node_proc_show/irq_effective_aff_proc_show,但 lscpu 是 CPU↔NUMA 拓扑用户态等价,为写 irq_affinity_proc_ops/irq_affinity_list_proc_ops 前置准备)",
+        "caveats": "默认终端输出会优化可读性可能变化;非终端(管道)始终 Field: data\\n 不优化——脚本里建议管道或 -p。cache size 自 v2.34 起按所有 CPU 汇总(v2.34 前按核,易混淆);cache ID 自 v2.37 跟内核不一定从 0 起。虚拟化环境反映 guest 配置非 host 物理拓扑。物理 ID(-y)不一定唯一/连续。-x hex 掩码与 taskset -c cpulist 不一样,要 cpulist 用 lscpu -e 而非 -x;要 taskset-兼容位掩码用 lstopo --cpuset-output-format taskset。"
+      },
+      {
+        "tool": "numactl",
+        "function": "控制进程或共享内存的 NUMA 策略(调度与内存放置)。策略被子进程继承,亦可对 tmpfs/hugetlbfs 文件设持久策略。",
+        "key_options": [
+          {
+            "opt": "--cpunodebind=nodes, -N",
+            "semantics": "只在指定 NUMA 节点的 CPU 上执行。nodes 可 N,N,N/N-N/+N(相对当前 cpuset)/!N-N(反选)/all/netdev:DEV/file:PATH/block:PATH/ip:HOST/pci:[seg:]bus:dev[:func]。"
+          },
+          {
+            "opt": "--physcpubind=cpus, -C",
+            "semantics": "只在指定物理 CPU 上执行。语义同 --cpunodebind 的 cpu 列表(+ 相对、! 反选、all)。注意 --cpubind(节点号)已废弃。"
+          },
+          {
+            "opt": "--membind=nodes, -m",
+            "semantics": "只从指定节点分配内存,不够则失败(硬限)。"
+          },
+          {
+            "opt": "--preferred=node, -p",
+            "semantics": "偏好从单节点分配,不够则回退其他节点。只接单节点号。"
+          },
+          {
+            "opt": "--preferred-many=nodes, -P",
+            "semantics": "偏好多节点,取离 local 最近的为最偏好。回退其他。"
+          },
+          {
+            "opt": "--interleave=nodes, -i",
+            "semantics": "交错分配策略,内存按节点轮询(round-robin);当前节点不够时回退。"
+          },
+          {
+            "opt": "--localalloc, -l",
+            "semantics": "尽量在进程当前节点分配,不够回退。"
+          },
+          {
+            "opt": "--balancing, -b",
+            "semantics": "为进程开启内核 NUMA balancing(若内核支持)。仅可与 --membind 合用,否则忽略。"
+          },
+          {
+            "opt": "--all, -a",
+            "semantics": "取消默认 cpuset 感知,使后续策略可用全部 CPU/节点。"
+          },
+          {
+            "opt": "--show, -s",
+            "semantics": "显示当前进程的 NUMA 策略。"
+          },
+          {
+            "opt": "--hardware, -H",
+            "semantics": "显示系统可用节点清单(--cpu-compress 时显示 cpu 范围)。"
+          }
+        ],
+        "when_to_use": "irq-numa-locality(rule R4-numa-irq-locality):把中断处理负载所在的任务(如网络 server 进程)和它的内存一起钉在目标 NUMA 节点——numactl --cpunodebind=<node> --membind=<node> 启动进程,使中断处理 + 数据访问都在同一 node。irq-affinity-tuning(rule R1-irq-concentrated)配套:对延迟敏感中断处理进程用 -C 物理核绑定(配合写 /proc/irq/N/smp_affinity 把中断也绑同核/同 LLC),减少中断跨核迁移。netdev:DEV 语法可定位网卡所在节点(numactl --cpunodebind=netdev:eth0 --membind=netdev:eth0 server)直接把 server 与网卡中断局部性对齐。-H 看节点清单与 cpu 范围前置准备。-s 看当前策略验证。",
+        "kernel_alternative": "irq_affinity_proc_ops/irq_affinity_list_proc_ops(互补:中断亲和由 /proc/irq/N/smp_affinity 设,numactl 是任务亲和与内存策略,两者配套用让中断与任务同 node);default_affinity_proc_ops(互补:全局中断默认掩码,numactl --cpunodebind 是任务默认节点);irq_affinity_setup(boot-only no runtime:irqaffinity=<cpulist> 设 boot 期全局中断默认,numactl 是任务/内存策略非中断策略)",
+        "caveats": "需 NUMA policy aware 内核。command 不经 shell 执行,要用 shell 元字符需 sh -c 包裹(-- 之后的 -l 等会被 numactl 误解析,man 给出 -- 分隔)。为 hugetlbfs 文件设策略不可用(truncate 不能扩展)。老 --cpubind 接节点号非 CPU 号,已废弃,误用会语义错。--balancing 只对 --membind 有效,与 --interleave/--preferred 合用会被忽略。32 位架构对超大 shm 段可能无法完整 policied。netdev:DEV 解析的节点是网卡所连,不等同 irq_desc 分配的 node(README 已强调后者也不等于硬件来源节点)。"
+      },
+      {
+        "tool": "lstopo",
+        "function": "显示系统拓扑(NUMA/Package/Core/PU/Cache/PCI 层级)。lstopo 默认图形窗口(无 X 退 console),lstopo-no-graphics 与 hwloc-ls 是纯文本构建变体(选项完全一致,man 同一页)。图形用嵌套盒子表示资源包含关系,Cache/NUMA 用特殊布局(画在 Core/PU 之上而非包含)。",
+        "key_options": [
+          {
+            "opt": "--of <format>",
+            "semantics": "强制输出格式。可选 default/window/console/ascii/tikz或tex/fig/svg/cairosvg/nativesvg/pdf/ps/png/synthetic/xml。无 --of 时按文件名后缀推断(.png→PNG),无文件名时 DISPLAY 在则开窗否则 console。"
+          },
+          {
+            "opt": "-i <path|specification>, --input",
+            "semantics": "不从本机发现拓扑,改从 <path> 读(XML 文件/-标准输入/含 Linux 拓扑文件的目录/x86 cpuid dump 目录/tarball)。或用 synthetic specification(如 'node:2 pu:3') 模拟假拓扑,spec 必须以 PU 数结尾。"
+          },
+          {
+            "opt": "-p --physical / -l --logical",
+            "semantics": "-p 显示 OS/物理索引(P# 前缀),-l 显示 hwloc 逻辑索引(L# 前缀)。默认 PU 与 NUMA 节点两者都显示,Core/Die/Package 只显示逻辑索引,其他类型不显示。"
+          },
+          {
+            "opt": "-c --cpuset / -C --cpuset-only",
+            "semantics": "-c 显示每个对象的 cpuset 字符串;-C 只显示 cpuset 不显示其他对象信息。"
+          },
+          {
+            "opt": "--cpuset-output-format <hwloc|list|taskset> (--cof)",
+            "semantics": "改 cpuset 显示格式。hwloc 默认;list=逗号分隔数字/范围(如 2,4-5,8);taskset=taskset 兼容(hex 位掩码)。需配合 --cpuset 或 --cpuset-only,否则隐含 --cpuset。"
+          },
+          {
+            "opt": "--pid <pid>",
+            "semantics": "显示进程 <pid> 视角的拓扑(其 allowed set 受该进程 cgroup/cpuset 限制)。同时标记该进程当前 CPU 与内存 binding(图形 Green,console verbose 追加 (binding))。pid=0 显示 lstopo 自身 binding。"
+          },
+          {
+            "opt": "--disallowed / --allow <all|local|0xff|nodeset=0xf0>",
+            "semantics": "--disallowed 显示被 cgroup 等行政限制排除的对象(Offline PU 仍忽略)。--allow 进一步改 allowed set:local=当前进程可用,all=全部,bitmap=指定 PU 集,nodeset=0x.. 指定 NUMA 节点集。"
+          },
+          {
+            "opt": "--restrict <cpuset|nodeset=<nodeset>|binding>",
+            "semantics": "把拓扑限制到给定 cpuset/nodeset/当前进程 binding。会移除被排除的 PU/NUMA 节点及其无子节点的父对象。注意:限制后会改变很多对象的逻辑索引。binding 需配合 --thissystem。"
+          },
+          {
+            "opt": "--filter <type>:<kind>",
+            "semantics": "过滤对象类型。kind=none(移除)/all(保留)/structure(有结构时保留)/important(仅 I/O)。--no-smt=--filter PU:none,--no-caches=--filter cache:none。"
+          },
+          {
+            "opt": "--ps --top",
+            "semantics": "在拓扑里显示现有进程为 Misc 对象。只显示被限制到部分 CPU 的进程(全 CPU 不显示),Linux 不显示内核线程。进程多时输出难读,改用 hwloc-ps。"
+          },
+          {
+            "opt": "--children-order <order>",
+            "semantics": "改 Memory/I/O/Misc 子对象相对 CPU 子的顺序。默认 memory:above,io:right,misc:right(NUMA 在 CPU 上、I/O 与 Misc 在右)。plain=严格按树形(NUMA 与 CPU 并列)。可加 :horiz/:vert/:rect 强制布局。"
+          },
+          {
+            "opt": "-v --verbose / -q --quiet / -s --silent",
+            "semantics": "-v 加详情(含 binding 标注),-q/-s 减详情。更详细的对象信息用 hwloc-info。"
+          }
+        ],
+        "when_to_use": "irq-affinity-tuning(rule R1-irq-concentrated)/irq-numa-locality(rule R4-numa-irq-locality):图形化看清 NUMA→LLC→Core→PU 层级、Cache 共享范围、NUMA 距离矩阵后再决定把中断绑到哪些核;rule R1/R4 调参前先用 lstopo 看 LLC 实例覆盖哪些 CPU、NUMA 节点边界,决定 smp_affinity 写入的核集(让 effective_affinity ⊂ node 内核集 + 同 LLC 内)。--pid <pid> 看目标任务受 cgroup/cpuset 限制后的实际可用 CPU 集(binding 标注),配合写 /proc/irq/N/smp_affinity 让中断与任务核同 node/LLC;--ps 看哪些进程已被限制(诊断 cgroup 隔离生效与否,间接影响中断可绑核集)。--of console 管道友取纯文本拓扑(脚本场景)。--no-io 收紧只看 CPU 侧拓扑(IRQ 调优主要看 CPU 侧)。",
+        "kernel_alternative": "(无,纯观察工具;对应 readonly 是 irq_node_proc_show/irq_effective_aff_proc_show,lstopo 是 CPU↔NUMA↔LLC 拓扑用户态等价;但 lstopo --disallowed 能显示 cgroup 限制对 allowed set 的影响,间接关联 default_affinity_proc_ops 与 AFFINITY_MANAGED 中断不可写的关系)",
+        "caveats": "图形输出依赖编译时支持(cairo/svg/pdf/ps/png 需对应库);无图形构建用 lstopo-no-graphics 或 hwloc-ls。console 模式无颜色,Green/White/Red 标注只在 verbose 文本/图形中体现。--restrict 后逻辑索引会变,跨机器复用 XML 拓扑要 --thissystem。--allow bitmap 的 hex 字符串按 PU 物理序解释。lstopo 用 4/3 宽高比矩形启发式,忽略 NUMA 物理距离/拓扑(ring/mesh)。本机 man 显示 hwloc-ls 是 lstopo-no-graphics 的同义别名(共享同一 man 页),不重复列 hwloc-ls 单独条目。"
+      },
+      {
+        "tool": "hwloc-ls",
+        "function": "lstopo 的纯文本构建变体。man 原文(hwloc-ls 共享 lstopo man page):hwloc-ls is identical to lstopo-no-graphics。永远走文本输出(console/ascii/xml/synthetic),无图形窗口依赖,无 cairo/svg/pdf/ps/png。选项与 lstopo 完全一致。",
+        "key_options": [
+          {
+            "opt": "(同 lstopo)",
+            "semantics": "所有 --of/-i/-p/-l/-c/-C/--pid/--disallowed/--allow/--restrict/--filter/--ps/--children-order/-v/-q/-s 等选项语义与 lstopo 完全一致。唯一区别:--of 的 window/fig/svg/cairosvg/nativesvg/pdf/ps/png 等图形格式不可用(未编译进此变体),强制用 --of console 或 --of ascii 或文件名 .xml/.synthetic 等。"
+          },
+          {
+            "opt": "--of console (默认)",
+            "semantics": "hwloc-ls 默认输出 console 文本摘要到 stdout(不像 lstopo 会尝试开窗)。管道/重定向时与终端行为一致。"
+          }
+        ],
+        "when_to_use": "irq-affinity-tuning / irq-numa-locality:与 lstopo 同,但用于无 X/SSH/容器等无图形环境;脚本管道里取拓扑用 hwloc-ls 更稳定(不会因 DISPLAY 误开窗)。rule R1/R4 同 lstopo,取 NUMA→LLC→Core→PU 层级后决定写 smp_affinity 的核集。",
+        "kernel_alternative": "(无,纯观察工具;同 lstopo,对应 readonly irq_node_proc_show/irq_effective_aff_proc_show)",
+        "caveats": "与 lstopo 选项完全一致但图形格式不可用。man 原文 identical to lstopo-no-graphics——若脚本里同时要图形+文本,直接用 lstopo --of 切换即可,不必同时装两个。其他 caveats 同 lstopo。本机 hwloc-ls 与 lstopo 共享同一 man 页(LSTOPO(1)),不重复详列。"
+      },
+      {
+        "tool": "watch",
+        "function": "周期性执行命令并显示输出(默认每 2 秒,占第一屏)。用于观察命令输出随时间变化。",
+        "key_options": [
+          {
+            "opt": "-n, --interval seconds",
+            "semantics": "设更新间隔。不允许小于 0.1 秒,更小值会被转换。'.' 与 ',' 都可用(任意 locale)。WATCH_INTERVAL 环境变量可持久设非默认间隔。"
+          },
+          {
+            "opt": "-d, --differences[=permanent]",
+            "semantics": "高亮相邻更新的差异。带 permanent 参数则显示自首次迭代以来所有变化。"
+          },
+          {
+            "opt": "-g, --chgexit",
+            "semantics": "可见输出变化时退出(屏外变化不触发退出)。"
+          },
+          {
+            "opt": "-p, --precise",
+            "semantics": "尝试每 --interval 秒精确执行命令(普通模式因 command 耗时会漂移)。"
+          },
+          {
+            "opt": "-t, --no-title",
+            "semantics": "关掉顶部显示间隔/命令/当前时间的标题行及空行。"
+          },
+          {
+            "opt": "-e, --errexit",
+            "semantics": "命令出错时冻结更新,按键后退出。"
+          },
+          {
+            "opt": "-q, --equexit <cycles>",
+            "semantics": "命令输出连续 N 个周期未变则退出。"
+          },
+          {
+            "opt": "-x, --exec",
+            "semantics": "用 exec(2) 直接执行命令而非 sh -c,减少引号需求。"
+          },
+          {
+            "opt": "-r, --no-rerun",
+            "semantics": "终端 resize 时不重跑命令(下次周期才重跑)。"
+          },
+          {
+            "opt": "-w, --no-wrap",
+            "semantics": "关掉行 wrap,长行截断而非换行。"
+          }
+        ],
+        "when_to_use": "irq-affinity-tuning(rule R1-irq-concentrated):watch -n1 cat /proc/interrupts 实时看 per-IRQ per-CPU 计数变化定位热点中断行(IRQ 号)+ 热点 CPU(哪列计数涨快);-d 高亮相邻变化便于抓正在涨的 IRQ。-t 关标题便于复制粘贴。-n 0.1 最快(下限)。irq-debug-recovery(rule R2-spurious-storm):watch -n1 cat /proc/irq/<irqN>/spurious 看 count/unhandled/last_unhandled_ms 是否还在涨(被禁中断计数停),-g 变化时退出可作自动化触发。验证阶段:写完 smp_affinity 后 watch -n1 cat /proc/irq/<irqN>/effective_affinity 看是否真的落到目标核集。",
+        "kernel_alternative": "(无,纯观察工具;对应 readonly 是 /proc/interrupts 与 irq_spurious_proc_show/irq_effective_aff_proc_show 的周期刷新入口,watch 本身不读写 tunable)",
+        "caveats": "POSIX 选项处理:遇首个非选项参数停止解析,故 command 之后的 flag 不被 watch 解释(要在 command 里用 watch 自身 flag 需放 command 前)。终端 resize 时直到下次调度更新才正确重绘,--differences 高亮在该次更新全丢(用 --no-rerun 则无输出)。非打印字符被剥除,要看用 cat -v 包进 pipeline。-p 精确模式不能补偿 command 耗时超过 interval 的情况,可能进入快速连发追赶状态。--differences 模式忽略组合字符差异只看基础字符。本机未装 irqtop/irqstat 时 watch -n1 cat /proc/interrupts 是中断计数观察的等价手段(裸 cat 不是工具)。"
+      },
+      {
+        "tool": "/proc/irq/<irqN>/smp_affinity 写操作(裸文件操作,非工具)",
+        "function": "直接 echo 写 per-irq 中断亲和性位掩码(CPU 掩码 hex 格式)到 /proc/irq/<irqN>/smp_affinity,请求把该中断绑到指定 CPU 集合。不是用户态工具条目,是裸 procfs 文件操作,但 irq 域核心调优手段,作为虚拟工具条目说明用法。",
+        "key_options": [
+          {
+            "opt": "echo <hexmask> > /proc/irq/<irqN>/smp_affinity",
+            "semantics": "hex 位掩码,低位=CPU0。例:echo 0f > /proc/irq/32/smp_affinity 绑 CPU0-3。掩码须至少命中一个 online CPU,空集/全离线返回 -EINVAL(对 per-irq 路径回退到 irq_select_affinity_usr 或 -EINVAL)。AFFINITY_MANAGED/PER_CPU 中断写返回 -EPERM(irq_can_set_affinity_usr 假)。"
+          },
+          {
+            "opt": "echo <cpulist> > /proc/irq/<irqN>/smp_affinity_list",
+            "semantics": "cpulist 格式(逗号分隔+范围),与 smp_affinity 同物异格式,改任一另一个同步反映。例:echo 0-3,8 > /proc/irq/32/smp_affinity_list 绑 CPU0-3,8。比 hex 位掩码易写易读,推荐用此格式(irq_affinity_list_proc_ops)。"
+          },
+          {
+            "opt": "echo <hexmask> > /proc/irq/default_smp_affinity",
+            "semantics": "改全局默认中断亲和性,只影响后续新中断(已存在中断不回退)。default_affinity_proc_ops。"
+          }
+        ],
+        "when_to_use": "irq-affinity-tuning(rule R1-irq-concentrated):定位热点 IRQ 后,echo cpulist > /proc/irq/<irqN>/smp_affinity_list 把中断绑到目标核集(优先 affinity_hint 范围内的核,见 README)。irq-numa-locality(rule R4-numa-irq-locality):echo node 内核集 > smp_affinity_list 让 effective_affinity 落 node 内消除跨节点访问。新中断默认想设全局:echo mask > /proc/irq/default_smp_affinity(default_affinity_proc_ops)。验证:写完等几个中断周期再 cat /proc/irq/<irqN>/effective_affinity 看是否真落到目标核集。",
+        "kernel_alternative": "irq_affinity_proc_ops(smp_affinity 是其用户态写入入口)、irq_affinity_list_proc_ops(smp_affinity_list 入口)、default_affinity_proc_ops(default_smp_affinity 入口)、irq_affinity_setup(boot-only no runtime:boot 期 irqaffinity=<cpulist> 设全局默认,与运行时 echo > default_smp_affinity 同底层掩码)",
+        "caveats": "需 root 写(0600 root 拥有,见 README)。AFFINITY_MANAGED(多队列网卡 managed-IRQ)/PER_CPU 中断写返回 -EPERM,不可用户态改(写前先 cat effective_affinity 看是否可改,见 README 边界)。空掩码/全离线返回 -EINVAL,不可用空集当'禁用中断'手段(README 明确)。写完立即生效但中断真正迁移可能在下次中断投递时(managed/在途中断有 pending mask 缓冲),改完等几个中断周期再读 effective_affinity 验证。smp_affinity 与 smp_affinity_list 是同一底层掩码两种格式,改任一即可别同时设(README)。这不是用户态工具是裸 procfs 写,但 irq 域核心操作,消费者需知语法。本机未装 irqbalance 时这是唯一手段;若装了 irqbalance,daemon 会周期覆盖手写值(需先停 irqbalance 或排除该 IRQ 见 banned_interrupts)。"
+      },
+      {
+        "tool": "/proc/irq/<irqN>/smp_affinity_list 写操作(裸文件操作,非工具)",
+        "function": "直接 echo 写 per-irq 中断亲和性 CPU 列表(cpulist 格式)到 /proc/irq/<irqN>/smp_affinity_list,与 smp_affinity 同物异格式,语义完全一致,仅格式不同。列此条目是因为 README 推荐用 cpulist 格式(易写易读),作为 smp_affinity 写操作条目的 cpulist-格式补充。",
+        "key_options": [
+          {
+            "opt": "echo <cpulist> > /proc/irq/<irqN>/smp_affinity_list",
+            "semantics": "cpulist=逗号分隔 CPU 号/range。例:0,5,8-11、0-2,6、0-10:2(步长 2 即 0,2,4,6,8,10)。语法与 taskset -c、cset --cpu 一致。与 smp_affinity(hex 位掩码)同物异格式,写任一另一个同步反映。"
+          },
+          {
+            "opt": "echo <cpulist> > /proc/irq/default_smp_affinity(注:default_smp_affinity 只有位图格式无 _list 变体)",
+            "semantics": "default_smp_affinity 无对应 _list 文件,全局默认须用 hex 位掩码格式(见 README 与 default_affinity_proc_ops)。"
+          }
+        ],
+        "when_to_use": "irq-affinity-tuning(rule R1-irq-concentrated)/irq-numa-locality(rule R4-numa-irq-locality):README 明确推荐用 smp_affinity_list(cpulist 比 bitmap 易写易读),是写 smp_affinity 的首选格式。echo 0-3,8 > /proc/irq/32/smp_affinity_list 把中断绑到 CPU0-3,8 比 echo 0,5,8-11 > smp_affinity 写 hex 易错少。验证同 smp_affinity:cat effective_affinity_list 看是否真落到目标核集。",
+        "kernel_alternative": "irq_affinity_list_proc_ops(本文件是其用户态写入入口)、irq_affinity_proc_ops(同物异格式,hex 位掩码版本)、irq_affinity_setup(boot-only no runtime:boot 期 irqaffinity=<cpulist> 与运行时 smp_affinity_list 同语法但作用全局默认)",
+        "caveats": "需 root 写。同 smp_affinity 限制:AFFINITY_MANAGED/PER_CPU 写返回 -EPERM,空集返回 -EINVAL,改完需等几个中断周期再读 effective_affinity_list 验证。smp_affinity_list 与 smp_affinity 是同一底层掩码,改任一即可别同时设(README)。default_smp_affinity 无 _list 变体,全局默认只能用 hex 位掩码。这是裸 procfs 写不是用户态工具,但因 README 推荐此格式故单独列条目便于消费者直接用。"
+      }
     ]
   },
   "rules": [

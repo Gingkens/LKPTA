@@ -6,6 +6,7 @@
       "name": "weight",
       "kernel_name": "ioc_weight_write",
       "path": "/sys/fs/cgroup/io.<name>/weight",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_BLK_CGROUP_IOCOST",
       "unit": "count",
@@ -56,6 +57,7 @@
       "name": "cost.qos",
       "kernel_name": "ioc_qos_write",
       "path": "/sys/fs/cgroup/io.<name>/cost.qos",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_BLK_CGROUP_IOCOST",
       "unit": "interface",
@@ -100,6 +102,7 @@
       "name": "cost.model",
       "kernel_name": "ioc_cost_model_write",
       "path": "/sys/fs/cgroup/io.<name>/cost.model",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_BLK_CGROUP_IOCOST",
       "unit": "interface",
@@ -144,6 +147,7 @@
       "name": "prio.class",
       "kernel_name": "ioprio_set_prio_policy",
       "path": "/sys/fs/cgroup/io.<name>/prio.class",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_BLK_CGROUP_IOPRIO",
       "unit": "enum: no-change|promote-to-rt|restrict-to-be|idle|none-to-rt",
@@ -204,13 +208,13 @@
         "good_for": [
           "(已废弃,改无效)"
         ],
-        "bad_for": []
+        "bad_for": ["(已废弃,handler 仅 pr_warn 'does not have any effect anymore',完全不生效,改 IO 调度器用 /sys/block/<dev>/queue/scheduler)"]
       },
       "decreasing": {
         "good_for": [
           "(已废弃,改无效)"
         ],
-        "bad_for": []
+        "bad_for": ["(已废弃,handler 仅 pr_warn 'does not have any effect anymore',完全不生效,改 IO 调度器用 /sys/block/<dev>/queue/scheduler)"]
       },
       "consumes": [
         "block/elevator.c:elevator_setup"

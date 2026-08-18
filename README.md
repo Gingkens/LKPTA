@@ -21,7 +21,7 @@ knowledge (README+playbook+summary/tunable/readonly.json, 按版本+模块存储
 
 | 角色 | 职责 | 读这份 |
 |---|---|---|
-| **维护者** | 为每个子系统、每个内核版本维护一份 recipe（`scan_recipes/<module>.json`），描述该模块暴露哪些可调参数、在源码哪里 | `scan_recipes/README.md` |
+| **维护者** | 为每个子系统、每个内核版本维护一份 recipe（`scan_recipes/<version>/<module>.json`），描述该模块暴露哪些可调参数、在源码哪里 | `scan_recipes/README.md` |
 | **生产者** | 跑 scan.py 拿工单 → 去内核源码读懂每个参数 → 产出 knowledge → 跑 verify.py 自查完整性 | [`PRODUCER.md`](./PRODUCER.md) |
 | **消费者** | 用 query.py 查询 knowledge → 给出针对目标系统的调优建议 | [`CONSUMER.md`](./CONSUMER.md) |
 
@@ -38,7 +38,8 @@ kt/
 ├── scan_recipes/       ← 工具 + recipe
 │   ├── README.md       ← scan.py 工具手册（用法、工单列说明）
 │   ├── scan.py         ← recipe → 参数工单的转码器
-│   └── <module>.json   ← 各子系统 recipe（如 sched.json）
+│   └── <version>/      ← 每个内核版本一份 recipe（与 knowledge/<version>/ 对齐）
+│       └── <module>.json   ← 各子系统 recipe（如 sched.json）
 └── .semcode.db/        ← 内核源码语义索引（供高级查询）
 ```
 

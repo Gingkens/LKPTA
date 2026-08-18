@@ -60,10 +60,26 @@
 - `classid`（net_cls cgroup）写后会 `iterate_fd` 批量更新已建 socket 的 classid（每 1000 fd 释放一次 task_lock），大 fd 表写会有可见开销。
 - `tcp_mem`/`udp_mem` 默认值运行时按 `nr_free_buffer_pages/16` 自动初始化（min 128 页），不同内存机器默认不同——别照抄示例值。
 
+## 用户空间工具（消费 playbook.userspace_tools 落地）
+
+> 内核参数改的是"缓冲深度/TCP mem 上限/NAPI busy poll/RPS 掩码"，但**改网卡队列数/Coalesce/Ring、看 socket 状况、设 qdisc、按 cgroup 分类流量**还要用户空间工具配合。详见 `playbook.json` 的 `userspace_tools` 节。
+
+- **网卡硬件配置**：`ethtool -L`（channels combined/tx/rx 数）、`-C`（coalesce rx-usecs/adaptive-rx/tx-aggr-*）、`-G`（ring rx/tx 大小）、`-K`（offload tso/gso/gro）、`-x/-X`（rxfh indirection/重映射，对 RPS/RFS 流量分布核心）、`-S`（per-queue statistics，含 eth-mac/rmon groups）、`-k`（feature 状态）。
+- **socket 观察**：`ss -t/-u/-x -a -m -i -p`（替代 netstat，skmem r/w/f/bl/d + cwnd/rtt/rto + 进程）、`netstat -r/-i/-s`（旧，man 自标 obsolete，但仍常用）、`ss --cgroup`（cgroup 归属）、`ss -N <netns>`（netns 切换）。
+- **统计监控**：`nstat -z/-r/-a/-j`（内核 SNMP 计数 Tcp/IpExt/UDP 等，per-pattern wildcard）、`lnstat -k softnet_stat:cpus/-k nf_conntrack`（统一 /proc/net/stat/ 周期采样）、`sar -n SOFT`（softnet_stat per-cpu）、`sar -n DEV/EDEV`（接口 rxkB/s/txkB/s/rxerr/txdrop）、`sar -n TCP/ETCP/UDP/SOCK`（协议层统计）。
+- **流量控制（tc）**：`tc qdisc add root <qdisc>`（mq/fq/codel/fq_codel/htb/tbf 等）、`tc class add`（classid 分层）、`tc filter add cgroup/bpf/flower/u32/fw`（按 cgroup/BPF/flow 分类）、`tc -s qdisc show`（统计）。
+- **netns**：`ip netns add/exec/list/identify/pids`（容器/子 netns 操作，含 monitor）、`ip -n <netns> link set`（在 netns 内执行 ip 命令）。
+- **网络配置**：`ip link set txqueuelen/mtu/xdp`、`ip route via+weight+congctl`（路由选路 + 拥塞控制）、`ip neigh`（邻居表）、`ip rule`（策略路由）、`ip -j -br link`（JSON 简表，脚本友好）。
+- **内核参数读写**：`sysctl net.core.somaxconn=X`、`sysctl -w net.ipv4.tcp_rmem='4096 87380 6291456'`、`sysctl --system`、`sysctl -a | grep net.ipv4.tcp`（探查）。
+- **cgroup v2 网络限额**：`systemd-run --property=IPAccounting=`（统计）、`--property=IPAddressAllow=/IPAddressDeny=`（IP 白/黑名单）、`--property=IPIngressFilterPath=/IPEgressFilterPath=`（BPF filter）、`--property=NetworkNamespacePath=`（指定 netns）、`--property=PrivateNetwork=`（私有 netns）。注意 `net_cls` cgroup v1 已 deprecated，v2 用 IPAccounting/IPAddress* 替代。
+
+工具不替代 tunable：`kernel_alternative` 字段标明每个工具替代/互补哪个内核参数（kernel_name 引用，如 `net_hotdata.max_backlog`/`sysctl_tcp_mem`/`bpf_jit_enable`/`init_net.ipv6.sysctl.multipath_hash_policy`/`cipso_v4_cache_enabled` 等）。boot-only 的哈希表大小（`hashsize=`/`tcp_max_.*_buckets`/`fib_buckets`）运行时改不了，靠 `ip route show cache`/`ss -m` 观察。conntrack/ifstat 本机未装未读，需要时自行装（conntrack 属 conntrack-tools 包）。
+
 ## 配套
 
 > 以下命令在模块目录内跑（`--knowledge .` 指当前目录）；在仓库根跑则用全路径如 `--knowledge knowledge/v7.2-rc7/net`。
 - 列模块所有参数摘要：`python3 query.py --knowledge . --list`
 - 取某参数完整记录：`python3 query.py --knowledge . --name net_hotdata.max_backlog`
 - 诊断流程与规则（智能/规则/混合三模式）：见同目录 `playbook.json`，用 `python3 query.py --knowledge . --playbook [--mode {intelligent|rule|hybrid}]` 取。
+- 用户空间工具清单：同 `playbook.json` 的 `userspace_tools` 节，用 `python3 query.py --knowledge . --playbook` 取（含完整 key_options/when_to_use/kernel_alternative/caveats）。
 - 不懂的术语：`python3 query.py --vocab knowledge/vocab.json --name NAPI`

@@ -45,10 +45,23 @@
 - **iocost 与 ioprio 是两个独立控制器**：同一 cgroup 可同时受两者影响，调 weight 不影响 prio.class 的优先级调度。blk-ioprio 改 `bio->bi_ioprio` 在 bio 提交路径生效，需要 IO scheduler/设备支持 IOPRIO 才有效（mq-deadline、multiqueue 等）。
 - **blkcg 的 `reset_stats` 不在 dfl_cftypes**：是 legacy_cftypes 的 `.write_u64`，且 handler 还会 `pr_info_once("blkio.%s is deprecated")`——本身已废弃。诊断场景读 stat 即可，不要依赖 reset_stats。
 
+## 用户空间工具（消费 playbook.userspace_tools 落地）
+
+> 内核参数改的是"调度器/iocost 配额/blkcg 份额"，但**任务最终落 IO 优先级、观察 IO 延迟、改 readahead**还要用户空间工具配合。详见 `playbook.json` 的 `userspace_tools` 节。
+
+- **IO 统计观察**：`iostat -x`（await/%util/aqu-sz 定位热点盘）、`lsblk -t`（看 SCHED/RA/RQ-SIZE）、`dd iflag=direct oflag=direct`（IO 基准前后对比调优效果）。
+- **per-process IO 优先级**：`ionice -c {0|1|2|3} -n 0-7 -p PID`（best-effort/realtime/idle，0=class 默认）——直接调 ioprio，等价 cgroup v1 的 blkio.user_idive，v2 上 ioprio 走 `io.prio.class`。
+- **块设备运行时参数**：`blockdev --setra N /dev/...`（改 readahead，运行时非 boot-only）、`--getra`/`--report`（查）、`--flushbufs`/`--rereadpt`（运维）。改 IO 调度器用 `/sys/block/<dev>/queue/scheduler`（sysfs 不属工具，但常用）。
+- **cgroup IO 落地（v2 现代）**：`systemd-run --property=IOWeight=`（份额，等价 io.weight）、`--property=IODeviceWeight=`（per-dev 份额）、`--property=IOReadIOPSMax=/IOWriteIOPSMax=`（per-dev IOPS 限）、`--property=IODeviceLatencyTargetSec=`（延迟 SLA，v2 新）。
+- **cgroup IO 落地（libcgroup）**：`cgcreate`/`cgset`/`cgexec`（通过 `-c scope` 部分适配 v2，写 `io.max`/`io.weight`/`io.latency`/`io.cost.qos`/`io.prio.class`）；`lscgroup`（**v1 only，v2 不可用**，改 `systemd-cgls` 或 `ls /sys/fs/cgroup/`）。
+
+工具不替代 tunable：`kernel_alternative` 字段标明每个工具替代/互补哪个内核参数（kernel_name 引用，如 `ioc_weight_write`/`ioc_qos_write`/`ioprio_set_prio_policy`）。boot-only 的 `elevator=`/`bdev_allow_write_mounted` 运行时改不了，靠 `blockdev` 和 sysfs 写实现运行时等价。xfs_io/hdparm/nvme/multipath/fio 本机未装未读，需要时自行装。
+
 ## 配套
 
 > 以下命令在模块目录内跑（`--knowledge .` 指当前目录）；在仓库根跑则用全路径如 `--knowledge knowledge/v7.2-rc7/io`。
 - 列模块所有参数摘要：`python3 query.py --knowledge . --list`
 - 取某参数完整记录：`python3 query.py --knowledge . --name ioc_weight_write`
 - 诊断流程与规则（智能/规则/混合三模式）：见同目录 `playbook.json`，用 `python3 query.py --knowledge . --playbook [--mode {intelligent|rule|hybrid}]` 取。
+- 用户空间工具清单：同 `playbook.json` 的 `userspace_tools` 节，用 `python3 query.py --knowledge . --playbook` 取（含完整 key_options/when_to_use/kernel_alternative/caveats）。
 - 不懂的术语：`python3 query.py --vocab knowledge/vocab.json --name iocost`

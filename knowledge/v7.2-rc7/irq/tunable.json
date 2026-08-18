@@ -130,7 +130,7 @@
       "gate": "",
       "boot_only": true,
       "unit": "cmdline",
-      "default": "未指定（irqfixup 默认 0，不启用轮询）",
+      "default": "未指定（irqpoll 默认不启用；指定则置 irqfixup=2 启用轮询）",
       "range": {"special": {"启用": "irqpoll 设 irqfixup=2，启用 misrouted 修复 + 每 HZ/10 定时轮询 SPURIOUS_DISABLED 中断"}},
       "summary": "boot cmdline 开关 irqpoll：启用 misrouted 修复 + 定时轮询。设 irqpoll → irqfixup=2，try_misrouted_irq 对 IRQF_IRQPOLL 标记的 handler 也尝试；poll_spurious_irqs 定时器每 POLL_SPURIOUS_IRQ_INTERVAL=HZ/10 周期扫描所有 IRQS_SPURIOUS_DISABLED 中断尝试 try_one_irq。PREEMPT_RT 不支持。",
       "when_to_increase": ["启用 irqpoll 以应对坏固件导致中断错路由且已被 spurious 检测禁掉需轮询恢复", "中断被禁后系统部分功能卡死需周期性重试"],

@@ -1,0 +1,526 @@
+{
+  "module": "net",
+  "version": "v7.2-rc7",
+  "_doc": "net 域用户空间工具清单。读 man page 产出,非训练数据印象。每条 tool=命令名, function=干什么, key_options=关键参数(真读 man 后记下语义/默认值/约束), when_to_use=何时用(映射到 net capability 的 when_applies 或 rule 的 symptom), kernel_alternative=该工具能替代/互补哪个 tunable(kernel_name 引用,boot-only 的标 no runtime), caveats=坑(权限/边界行为/版本差异)。工具不列优先级——消费者按场景选。共 11 个工具(ip/ethtool/ss/netstat/nstat/tc/lnstat/sysctl/systemd-run/sar/ip-netns)。未装未读:conntrack(man 无 entry, 装了也只在 conntrack-tools 包);ifstat(man 无 entry,iperf3 风格的接口统计工具替代品是 sar -n DEV 或 lnstat)。",
+  "tools": [
+    {
+      "tool": "ip",
+      "function": "iproute2 主命令,显示/操纵路由、网络设备、接口、tunnels。子对象 address/link/route/neighbour/rule/netns/tcp_metrics/sr/ioam/xfrm/nexthop/ntable/maddress/mroute/mrule/fou/ila/l2tp/macsec/monitor/netconf/mptcp/token/tunnel/tuntap/vrf/stats 等。net 域最核心的网卡/路由/邻居表操作入口。",
+      "key_options": [
+        {
+          "opt": "-s, -stats, -statistics",
+          "semantics": "输出更多信息,重复出现信息量递增。ip -s link 显示接口收发字节数/包数/错误/丢包/MCAST/multicast 等统计(等价 netstat -i 但更现代)。"
+        },
+        {
+          "opt": "-n, -netns <NETNS>",
+          "semantics": "切到指定网络命名空间执行后续命令。等价 ip netns exec NETNS ip ...。容器/多 netns 场景必备。"
+        },
+        {
+          "opt": "-j, -json / -p, -pretty",
+          "semantics": "JSON 输出 / 带缩进的可读 JSON。脚本解析推荐。"
+        },
+        {
+          "opt": "-br, -brief",
+          "semantics": "表格化摘要。仅 ip addr show / ip link show / ip neigh show 支持,人读优先。"
+        },
+        {
+          "opt": "-d, -details / -r, -resolve",
+          "semantics": "-d 输出更多细节(如 xdp/kernel 模块);-r 用 DNS 解析地址代替 IP。"
+        },
+        {
+          "opt": "ip link set dev DEV {up|down|txqueuelen PACKETS|mtu MTU|netns {PID|NAME|FILE}|xdp {off|object FILE|pinned FILE}}",
+          "semantics": "改网卡状态/属性。txqueuelen 改发方向 qdisc 长度(与 qdisc_max_burst 互补)。numtxqueues/numrxqueues 在 ip link add 时指定通道数(与 ethtool -L 互补,但仅虚拟设备)。gso_max_size/gro_max_size/gso_max_segs 控制 GRO/GSO 聚合(与 net_hotdata.sysctl_max_skb_frags/net_hotdata.gro_normal_batch 互补)。netns 把网卡移入指定 netns。xdp 附加/卸载 XDP BPF 程序(与 bpf_jit 互补:xdp 是 attach,jit 是编译执行)。"
+        },
+        {
+          "opt": "ip -s link show / ip -s -s link show dev DEV",
+          "semantics": "看接口 RX/TX bytes/pkts/errs/drop/mcast 统计。-s 重复信息量递增。是 ethtool -S 之外最直接的接口层观察。"
+        },
+        {
+          "opt": "ip route {add|del|change|replace} PREFIX via ADDR dev DEV [weight N] [nexthop ...] [congctl NAME] [flowlabel FLOWLABEL]",
+          "semantics": "操纵路由表。multipath 用 nexthop + weight 设 ECMP 各路径权重。congctl 设 per-route TCP 拥塞控制(与 init_net.ipv6.sysctl.multipath_hash_policy 互补:hash 决定选哪条路,congctl 决定该路用哪个 cc)。ip route get flowlabel 验证 IPv6 flowlabel 是否被路由层使用。"
+        },
+        {
+          "opt": "ip neigh show / ip neigh flush all",
+          "semantics": "邻居表(ARP/NDISC)查看与刷新。与 inet_peer_threshold/minttl/maxttl 互补:neigh 是 L2→L3 邻居缓存,inet_peer 是 per-peer L3 状态缓存(不同层)。"
+        },
+        {
+          "opt": "ip rule list / ip rule add PREF from PREFIX lookup TABLE",
+          "semantics": "策略路由(PBR)。rule 决定哪些包查哪个 table,table 内才是 route。fib_multipath_hash_* 影响 ECMP 选路但与 rule 表选择独立。"
+        },
+        {
+          "opt": "ip netns list/add/del/exec/set/identify/pids/monitor",
+          "semantics": "netns 子命令全功能。add 建 /run/netns/NAME;exec 在 netns 里跑命令(自动 bind mount /etc/netns/NAME/* 到 /etc/);pids 列该 netns 进程。与 sysctl_fb_tunnels_only_for_init_net/sysctl_devconf_inherit_init_net 互补:sysctl 控制 fallback tunnel/devconf 继承策略,ip netns 是建/进/管操作入口。"
+        }
+      ],
+      "when_to_use": "buffer-queue-depth:用 ip -s link 看 RX/TX 统计(队列堆积、error、drop)定位拥塞;tcp-tuning:用 ip route get 看 ECMP 选哪条路、congctl 设 per-route 拥塞控制;udp-and-fib-mem:用 ip route show 查 FIB 表大小趋势(与 fib_sync_mem 互补);rps-flow-limit:用 ip -s link 看 per-queue(若驱动支持)统计与 ethtool -x 互补看 RSS→queue 映射;bpf-jit-security:用 ip link set dev xdp object/pinned attach XDP BPF 程序(与 bpf_jit_enable 互补:bpf_jit 是 BPF 编译执行总开关,xdp 是 netfilter 之外的 attach 点);ipv6-options-flowlabel:用 ip route get flowlabel 验证 flow label 路由行为、ip -6 route show 看 multipath 路由;cgroup-net-classification:无直接关系(cgroup classid 走 tc cls_cgroup);netns-and-runtime-misc:用 ip netns add/exec 验证 fb_tunnels/devconf_inherit 行为;boot-cmdline-sizing:用 ip netns list 看 fallback tunnel 是否如 sysctl 期望。rule R1/R2/R3/R10 的 read 阶段 ip -s link 是 ethtool -S 之外的接口层入口。",
+      "kernel_alternative": "net_hotdata.qdisc_max_burst(ip txqueuelen 互补:txqueuelen 是 qdisc 长度,qdisc_max_burst 是出队批量)、net_hotdata.sysctl_max_skb_frags/gro_normal_batch(ip link gso_max_size/gro_max_size/gso_max_segs 互补,虚拟设备建时设)、bpf_jit_enable/bpf_jit_harden/bpf_jit_kallsyms/bpf_jit_limit(ip link xdp 互补:bpf_jit 是 BPF 编译/执行/加固,xdp 是 attach 点)、sysctl_tcp_mem/sysctl_tcp_max_orphans(无直接替代,ip route congctl 是 per-cc 不控内存)、inet_peer_threshold/inet_peer_minttl/inet_peer_maxttl(无直接替代,ip neigh 是 L2 邻居表,inet_peer 是 L3 peer 缓存)、sysctl_fb_tunnels_only_for_init_net/sysctl_devconf_inherit_init_net(ip netns 是操作入口,sysctl 是策略开关)、init_net.ipv6.sysctl.multipath_hash_policy/init_net.ipv6.sysctl.multipath_hash_fields(ip route weight 是显式 ECMP 权重,sysctl 是 hash 字段策略)、set_thash_entries/set_uhash_entries/set_tcpmhash_entries/boot-only no runtime:ip route/ip neigh 是运行时观察/操纵,boot-only 哈希表大小改需 reboot)",
+      "caveats": "改网卡属性(txqueuelen/mtu/xdp/netns)需 CAP_NET_ADMIN。ip link set dev xdp object 失败常见原因:驱动不支持 native XDP 会 fallback generic,xdpdrv 强制 native 不支持则报错。ip -br 仅支持 addr/link/neigh show 子集。ip netns del 若 netns 内有进程占用,网卡会延迟到进程退出才回 default netns——del 前先 ip netns pids NAME | xargs kill。numtxqueues/numrxqueues 仅 ip link add 时设,已存在设备改通道数用 ethtool -L。"
+    },
+    {
+      "tool": "ethtool",
+      "function": "查询/控制网卡驱动与硬件设置。子命令 -i(driver)/-k(features)/-c(coalesce)/-C(set coalesce)/-g(ring)/-G(set ring)/-l(channels)/-L(set channels)/-x(rxfh indir/key)/-X(set rxfh)/-S(statistics)/-a(pause)/-A(set pause)/--monitor(netlink 通知)。net 域网卡层调优核心。",
+      "key_options": [
+        {
+          "opt": "-i, --driver devname",
+          "semantics": "查 driver/firmware-version/bus-info/扩展特性。先确认驱动版本再调参,很多网卡特性驱动相关。"
+        },
+        {
+          "opt": "-k, --show-features / --show-offload devname",
+          "semantics": "查协议 offload 与 feature 状态(rx/tx checksum、sg、tso、ufo、gso、gro、lro、rxvlan、txvlan、ntuple 等)。"
+        },
+        {
+          "opt": "-K, --features devname FEATURE on|off ...",
+          "semantics": "改 feature。tso/gso/gro/lro 与 net_hotdata.sysctl_max_skb_frags/net_hotdata.gro_normal_batch 互补:网卡层开关 vs 内核层 batch 上限。改 GRO 会影响 gro_normal_batch 是否生效。"
+        },
+        {
+          "opt": "-c, --show-coalesce / -C, --coalesce devname [adaptive-rx on|off] [adaptive-tx on|off] [rx-usecs N] [rx-frames N] [tx-usecs N] [tx-frames N] [rx-usecs-irq N] [rx-frames-irq N] [tx-usecs-irq N] [tx-frames-irq N] [stats-block-usecs N] [pkt-rate-low N] [rx-usecs-low N] [rx-frames-low N] [tx-usecs-low N] [tx-frames-low N] [pkt-rate-high N] [rx-usecs-high N] [rx-frames-high N] [tx-usecs-high N] [tx-frames-high N] [sample-interval N] [cqe-mode-rx on|off] [cqe-mode-tx on|off] [tx-aggr-max-bytes N] [tx-aggr-max-frames N] [tx-aggr-time-usecs N]",
+          "semantics": "查/改中断合并。rx-usecs/rx-frames 是收方向中断合并阈值(达任一即产中断);adaptive-rx=on 让驱动自适应调。tx-aggr-* 是 TX 聚合(与 net_hotdata.qdisc_max_burst 互补:网卡层聚合 vs 内核层出队批量)。cqe-mode-rx/tx 是 NDO CQE 模式。与 NAPI 配额 net_hotdata.netdev_budget/net_hotdata.netdev_budget_usecs 联动:中断合并太松→单次 NAPI 包多但延迟高;太紧→频繁中断 CPU 占用高。"
+        },
+        {
+          "opt": "-g, --show-ring / -G, --set-ring devname [rx N] [rx-mini N] [rx-jumbo N] [tx N] [rx-buf-len N] [tcp-data-split auto|on|off] [cqe-size N] [tx-push on|off] [rx-push on|off] [tx-push-buf-len N]",
+          "semantics": "查/改 rx/tx ring 描述符数。rx N 是 RX ring 槽数(与 net_hotdata.max_backlog 互补:ring 是网卡层缓冲,backlog 是内核 per-CPU 收容)。rx-buf-len 改单 buffer 大小。tcp-data-split 影响 header/data 分离。cqe-size 改 completion queue event 大小。"
+        },
+        {
+          "opt": "-l, --show-channels / -L, --set-channels devname [rx N] [tx N] [other N] [combined N]",
+          "semantics": "查/改通道数。channel 是一个 IRQ + 关联的 queue 集合。combined=N 多用途通道(同通道既收又发)。改 combined 直接影响 RPS/RFS/flow_limit 是否能跨 CPU 分发——通道数太少 RPS 难以散开。改前先 ip link 确认 dev up。"
+        },
+        {
+          "opt": "-x, --show-rxfh-indir / --show-rxfh devname / -X, --set-rxfh-indir / --rxfh devname [hkey xx:yy:..] [hfunc FUNC] [xfrm symmetric-xor|none] [start N] [equal N | weight W0 W1 ... | default] [context CTX | new] [delete]",
+          "semantics": "查/改 RSS indirection table 与 hash key。equal N 把流均匀散到前 N 个 RX queue;weight 按权重分配;default 恢复默认。hkey 设 RSS hash key(与 /proc/sys/net/core/netdev_rss_key readonly 互补:netdev_rss_key 是内核侧的 key,ethtool -x 看驱动实际用哪个 key)。xfrm symmetric-xor 让双向流同 queue(便于反向追踪)。与 rps_sock_flow_sysctl/flow_limit_cpu_sysctl 互补:RSS 是硬件层 flow→queue,RPS 是软件层 flow→CPU 分发。"
+        },
+        {
+          "opt": "-S, --statistics devname [--all-groups|--groups [eth-phy] [eth-mac] [eth-ctrl] [rmon]] [--src aggregate|emac|pmac]",
+          "semantics": "查统计。无 --groups 时 NIC/driver 私有统计(命名因厂商而异);--groups eth-phy/eth-mac/eth-ctrl/rmon 是标准化组(跨厂商可比)。--src 选 eMAC/pMAC/aggregate(支持 MAC Merge 时)。与 sar -n DEV/SOFT 互补:ethtool -S 是瞬时快照,sar 是时序采样。"
+        },
+        {
+          "opt": "-a, --show-pause / -A, --pause devname [autoneg on|off] [rx on|off] [tx on|off]",
+          "semantics": "查/改 IEEE 802.3 流控(pause frame)。rx/tx pause on 让对端拥塞时发 pause 让本端暂缓。调优权衡:pause 减少丢包但增加缓冲延迟;关闭则依赖 qdisc AQM。"
+        },
+        {
+          "opt": "--monitor [command] [devname]",
+          "semantics": "监听 netlink 通知实时显示状态变化。无 command 显示所有 ethtool 通知;带 command 只显示该类。"
+        },
+        {
+          "opt": "-I, --include-statistics",
+          "semantics": "在 get 命令(-i/-k/-g/-l/-c/-a/-x)输出中附加相关统计。配合 --src aggregate|emac|pmac 选 MAC Merge 源。"
+        }
+      ],
+      "when_to_use": "buffer-queue-depth:用 -S/--groups eth-mac 看 rx_pkts/rx_drops/rx_missed_errors(网卡层 drop 早于 softnet_stat drop);-c/-C 调 coalesce 与 NAPI budget 联动;-g/-G 改 ring 与 max_backlog 联动;-l/-L 改通道数给 RPS 留散开空间;tcp-tuning:用 -S 看 tx_busy/tcp_seg_offload 相关计数;-K tso/gso/gro 与 max_skb_frags/gro_normal_batch 联动;udp-and-fib-mem:用 -S 看 rx_drops 与 udp_mem pressure 关联;rps-flow-limit:用 -x/-X 调 RSS 与 rps_sock_flow_entries/flow_limit_cpu_bitmap 联动(RSS 硬件层 + RPS 软件层);napi-busy-poll:用 -c 看 adaptive-rx 状态(busy poll 与中断合并都是延迟/吞吐权衡);bpf-jit-security:无直接关系(BPF xdp 用 ip link xdp);ipv6-options-flowlabel:用 -X xfrm symmetric-xor 让双向 flow 同 queue(ECMP hash 互补);cgroup-net-classification:无直接关系;netns-and-runtime-misc:用 -i 确认 driver 后再调 dev 特性;boot-cmdline-sizing:无(boot-only 参数 ethtool 不触及);cipso-netlabel:无。rule R1-softnet-dropped:ethtool -S 看 rx_drops 早于内核 backlog 满;R2-softnet-time-squeeze:ethtool -c 看 rx-usecs/adaptive-rx 是否过松导致 NAPI 退出;R3-rps-not-working:ethtool -x 看 RSS indirection 是否均匀;R4-flow-limit-triggered:ethtool -X weight/equal 与 flow_limit_cpu 配合;R10-tx-qdisc-stall:ethtool -c tx-usecs/tx-aggr-* 与 qdisc_max_burst 联动。",
+      "kernel_alternative": "net_hotdata.max_backlog(-G rx 是网卡层 ring,backlog 是内核 per-CPU 收容,互补)、net_hotdata.netdev_budget/net_hotdata.netdev_budget_usecs(-C rx-usecs/rx-frames 是中断合并阈值,NAPI budget 是单次 NAPI 处理上限,联动)、net_hotdata.qdisc_max_burst(-C tx-aggr-* 是网卡层 TX 聚合,qdisc_max_burst 是内核出队批量,联动)、weight_p/dev_weight_rx_bias/dev_weight_tx_bias(-L combined 是通道数影响 dev_rx/tx_weight 配额上限,互补)、net_hotdata.gro_normal_batch(-K gro 与 gro_normal_batch 联动:关 gro 则 gro_normal_batch 无意义)、net_hotdata.sysctl_max_skb_frags(-K tso/gso 与 max_skb_frags 联动:关 tso 则 frags 不聚合)、net_hotdata.tstamp_prequeue(-k 查 hw-timestamp 是否开,与 prequeue 时间戳精度互补)、rps_sock_flow_sysctl(-X RSS 是硬件 flow→queue,RPS 是软件 flow→CPU,互补;CONFIG_RPS 与 ethtool RSS 独立)、flow_limit_cpu_sysctl/netdev_flow_limit_table_len(-X equal/weight 与 flow_limit 配合:RSS 散开后才需要单流限速)、netdev_rss_key(readonly,/proc/sys/net/core/netdev_rss_key 是内核侧 key,ethtool -x 看驱动实际 key)、bpf_jit_enable/bpf_jit_harden/bpf_jit_kallsyms/bpf_jit_limit(无直接替代,BPF xdp attach 走 ip link xdp,bpf_jit 是编译执行总开关)",
+      "caveats": "改网卡设置(-C/-G/-L/-K/-A/-X)需 root 且网卡 up。很多特性驱动相关,man 原文: NIC- and driver-specific statistics 命名跨厂商无共识,必须查 driver 文档。--groups eth-phy/eth-mac/eth-ctrl/rmon 是较新标准组,旧 ethtool 不支持。RSS hash key 长度必须设备支持长度,格式 xx:yy:zz 每字节两位 nibble。-L combined 减少通道数会释放 IRQ,改前确认无 IRQ 亲和性配置依赖。-G rx N 改 ring 描述符数有上下限,-g 看当前与最大值。-K tso off 会影响 BIG TCP(ip link gso_max_size 配合)。adaptive-rx=on 时 -C 的 rx-usecs/frames 可能被驱动忽略。"
+    },
+    {
+      "tool": "ss",
+      "function": "socket 统计工具,netstat 的现代替代。dump 所有 socket 类型(TCP/UDP/UNIX/RAW/SCTP/DCCP/MPTCP/NETLINK/PACKET/vsock/XDP/Tipc)的状态/队列/内存/timer/cgroup/BPF filter。net 域连接观察核心。",
+      "key_options": [
+        {
+          "opt": "-t/-u/-x/-w/-S/-d/-M, --tcp/--udp/--unix/--raw/--sctp/--dccp/--mptcp",
+          "semantics": "按协议过滤。-t TCP、-u UDP、-x UNIX、-w RAW、-S SCTP、-d DCCP、-M MPTCP。可组合如 ss -t -u。"
+        },
+        {
+          "opt": "-a, --all / -l, --listening",
+          "semantics": "-a 显示监听+非监听(对 TCP 含 established);-l 仅监听 socket(默认监听 socket 被忽略)。"
+        },
+        {
+          "opt": "-n, --numeric / -r, --resolve",
+          "semantics": "-n 不解析服务名显示数字端口与精确带宽值;-r 解析地址/端口为 DNS 名。脚本用 -n。"
+        },
+        {
+          "opt": "-e, --extended",
+          "semantics": "uid/ino/sk cookie 详情。配合 -p 看进程归属。"
+        },
+        {
+          "opt": "-m, --memory",
+          "semantics": "显示 socket 内存:skmem:(r<rmem_alloc>,rb<rcv_buf>,t<wmem_alloc>,tb<snd_buf>,f<fwd_alloc>,w<wmem_queued>,o<opt_mem>,bl<back_log>,d<sock_drop>)。与 sysctl_tcp_mem/sysctl_tcp_max_orphans/sysctl_udp_mem 直接相关:rmem_alloc 接近 rcv_buf 或 wmem_alloc 接近 snd_buf 时 pressure 触发。sock_drop 是 demux 前 drop 计数。"
+        },
+        {
+          "opt": "-o, --options",
+          "semantics": "显示 TCP timer:timer:(<name>,<expire>,<retrans>)。name ∈ on/keepalive/timewait/persist/unknown。on 是 retrans/early_retrans/tail_loss_probe。诊断重传/keepalive/zero_window 直接入口。"
+        },
+        {
+          "opt": "-i, --info",
+          "semantics": "显示内部 TCP 信息:ts/sack/ecn/ecnseen/fastopen/cong_alg/wscale/rto/backoff/rtt/rttvar/ato/mss/cwnd/pmtu/ssthresh/bytes_acked/bytes_received/segs_out/segs_in/send_bps/lastsnd/lastrcv/lastack/pacing_rate/rcv_space/mptcp flags。诊断 TCP 拥塞窗口/RTT/重传超时核心。"
+        },
+        {
+          "opt": "--tos",
+          "semantics": "显示 ToS/TOS 字节与 class_id。man 原文:class_id 是 net_cls cgroup 设的 class id;若 class 为 0 则显示 SO_PRIORITY 设的优先级。直接观察 cgroup-net-classification 是否生效。"
+        },
+        {
+          "opt": "--cgroup",
+          "semantics": "显示 cgroup v2 pathname(相对 mount point)。看 socket 归属哪个 cgroup。"
+        },
+        {
+          "opt": "-p, --processes / -T, --threads",
+          "semantics": "-p 显示使用 socket 的进程;T 显示线程(隐含 -p)。需 root 看他人进程。"
+        },
+        {
+          "opt": "-N NSNAME, --net=NSNAME / -A QUERY",
+          "semantics": "-N 切到指定 netns;-A 指定 socket 表(逗号分隔,可 ! 排除):all/inet/tcp/udp/raw/unix/packet/netlink/dccp/sctp/tipc/vsock_stream/vsock_dgram/xdp/mptcp 等。"
+        },
+        {
+          "opt": "-s, --summary / -E, --events",
+          "semantics": "-s 打印摘要统计(不解析 socket list,从各源取数,sar SOCK 互补)。-E 持续显示被销毁的 socket。"
+        },
+        {
+          "opt": "-b, --bpf / --bpf-maps / --bpf-map-id=MAP_ID",
+          "semantics": "-b 显示 socket classic BPF filter(需 admin);--bpf-maps pretty-print 所有 BPF socket-local 数据;--bpf-map-id 仅指定 map。与 bpf_jit 互补:BPF filter 是 attach,jit 是编译执行。"
+        },
+        {
+          "opt": "FILTER: state STATE-FILTER / EXPRESSION",
+          "semantics": "STATE-FILTER 是 state/exclude + 标识符序列(established/syn-sent/.../all/connected/synchronized/bucket/big/bound-inactive)。EXPRESSION 是谓词+dst/sport/dport/dev/fwmark/cgroup/autobound 过滤。"
+        },
+        {
+          "opt": "-K, --kill",
+          "semantics": "强制关闭 socket(IPv4/IPv6 only)。静默跳过内核不支持关闭的 socket。"
+        }
+      ],
+      "when_to_use": "buffer-queue-depth:用 ss -m 看 socket skmem 的 bl<back_log> 与 sock_drop 定位 backlog 层 drop;tcp-tuning:用 ss -t -m -i -o 看 TCP 内存(rmem_alloc/wmem_alloc 接近上限→tcp_mem pressure)、timer(retrans 频繁)、cwnd/rtt(拥塞窗口小→调 cc);用 ss -t -m 看 orphan 数量(状态 closed/time_wait 是 orphan,与 sysctl_tcp_max_orphans 关联);udp-and-fib-mem:用 ss -u -m 看 UDP socket 内存(与 sysctl_udp_mem pressure 关联);napi-busy-poll:用 ss -t -i 看 rto/ato 是否太大需 busy poll;ipv6-options-flowlabel:用 ss -6 看 IPv6 socket 状态;cgroup-net-classification:用 ss --tos 看 class_id 是否被 net_cls 设上(若 0 则 write_classid 未生效或 SO_PRIORITY 优先);netns-and-runtime-misc:用 ss -N NSNAME 看指定 netns 内 socket;bpf-jit-security:用 ss -b 看 socket 上挂的 BPF filter(与 bpf_jit 互补)。rule R5-tcp-mem-pressure:ss -t -m 看 rmem_alloc/wmem_alloc 触发 pressure;R6-busy-poll-latency:ss -t -i 看 rto 与 cwnd 决定是否需 busy_poll/busy_read。",
+      "kernel_alternative": "sysctl_tcp_mem(ss -m 看 rmem_alloc/wmem_alloc 是 tcp_mem 上限触发点)、sysctl_tcp_max_orphans(ss -t 状态 closed/time_wait 计数是 orphan 量)、sysctl_udp_mem(ss -u -m 看 UDP rmem_alloc 触发 udp_mem pressure)、inet_peer_threshold/inet_peer_minttl/inet_peer_maxttl(无直接关系,inet_peer 是路由 peer 缓存非 socket)、write_classid(ss --tos 看 class_id 是 write_classid 的观察入口)、sysctl_net_busy_poll/sysctl_net_busy_read(ss -t -i 看 rto/cwnd 决定是否需开 busy poll)、bpf_jit_enable/bpf_jit_harden/bpf_jit_kallsyms/bpf_jit_limit(ss -b 看 socket BPF filter 与 bpf_jit 编译执行互补)",
+      "caveats": "默认(无选项)只列非监听已建立 socket,要看全部用 -a。-p 看他人进程需 root(CAP_NET_ADMIN 或 root)。-b 看 BPF filter 需 admin。--tos 的 class_id 在 class 为 0 时显示 SO_PRIORITY 值,易混淆(看到非 0 不一定是 net_cls 生效)。Linux socket 状态枚举是 ESTABLISHED/SYN_SENT/SYN_RECV/FIN_WAIT1/FIN_WAIT2/TIME_WAIT/CLOSE/CLOSE_WAIT/LAST_ACK/LISTEN/CLOSING。-K 强制关闭 socket 静默跳过不支持的,不要假设全部成功。skmem 的 fwd_alloc 是 socket cache 预留,非当前在用。"
+    },
+    {
+      "tool": "netstat",
+      "function": "旧版网络统计:socket 连接、路由表、接口统计、masquerade、multicast。man 原文明确:This program is mostly obsolete. Replacement for netstat is ss。netstat -r 替代是 ip route,netstat -i 替代是 ip -s link,netstat -g 替代是 ip maddr。保留供老脚本兼容。",
+      "key_options": [
+        {
+          "opt": "(无)/ -t/-u/-U/-S/-w/-x (tcp/udp/udplite/sctp/raw/unix)",
+          "semantics": "默认列所有打开 socket。可按协议过滤,-t TCP,-u UDP,-U UDPLite,-S SCTP,-w RAW,-x UNIX。"
+        },
+        {
+          "opt": "-r, --route",
+          "semantics": "显示路由表(等价 route -e)。替代:ip route。"
+        },
+        {
+          "opt": "-i, --interfaces",
+          "semantics": "显示接口表。替代:ip -s link。与 ethtool -S 互补:netstat -i 是内核 /proc/net/dev 视图,ethtool -S 是驱动视图。"
+        },
+        {
+          "opt": "-s, --statistics",
+          "semantics": "显示 per-protocol SNMP 摘要统计(等价 nstat 但无增量模式)。与 sar -n TCP/ETCP/UDP/ICMP 互补:sar 是时序采样,netstat -s 是瞬时累计。"
+        },
+        {
+          "opt": "-M, --masquerade",
+          "semantics": "显示 masqueraded 连接(需要 IP 伪装)。"
+        },
+        {
+          "opt": "-g, --groups",
+          "semantics": "显示 IPv4/IPv6 multicast 组成员。替代:ip maddr。"
+        },
+        {
+          "opt": "-l, --listening / -a, --all",
+          "semantics": "-l 仅监听(默认省略);-a 监听+非监听。"
+        },
+        {
+          "opt": "-e, --extend (可双 -ee)",
+          "semantics": "显示附加信息(User/Inode)。双 -ee 最大详情。"
+        },
+        {
+          "opt": "-o, --timers",
+          "semantics": "显示网络 timer(等价 ss -o)。"
+        },
+        {
+          "opt": "-p, --program",
+          "semantics": "显示 PID/进程名。需 root 看他人 socket。"
+        },
+        {
+          "opt": "-c, --continuous / -W, --wide",
+          "semantics": "-c 每秒持续输出;-W 不截断 IP(地址宽显示)。"
+        },
+        {
+          "opt": "-n, --numeric / --numeric-hosts / --numeric-ports / --numeric-users",
+          "semantics": "数字显示不解析,可分别只对 hosts/ports/users。"
+        }
+      ],
+      "when_to_use": "tcp-tuning:用 netstat -s 看 per-protocol TCP/UDP 摘要(与 nstat 互补:nstat 支持增量/JSON,netstat -s 是累计);buffer-queue-depth:用 netstat -i 看接口 RX/TX/err/drop 统计(/proc/net/dev 视图);netns-and-runtime-misc:无直接关系;ipv6-options-flowlabel:用 netstat -6 看 IPv6 socket。注意 man 明确 obsolete,优先 ss。rule R5-tcp-mem-pressure:netstat -s 看 TCP 重传/orphan 计数(辅助诊断);其余规则优先 ss。",
+      "kernel_alternative": "(无直接替代,本工具是只读观察;对应 sysctl_tcp_mem/sysctl_udp_mem/sysctl_tcp_max_orphans 的累计观察入口,等价 ss -m -s 与 nstat。netstat -r 等价 ip route,netstat -i 等价 ip -s link,netstat -g 等价 ip maddr——这些子命令的现代等价都在 ip/ss)",
+      "caveats": "man 原文明确 obsolete,新代码不要依赖 netstat,优先 ss/ip。netstat -s 的 Recv-Q 在 Listening 状态自 2.6.18 起是 syn backlog 当前值,Send-Q 是 syn backlog 最大值——与 ss 不同。-F 从 FIB 取路由(默认),-C 从 route cache 取(但 IP route cache 已移除,该选项 deprecated)。base_reachable_time 与 retrans_time 是 deprecated 参数,sysctl 不允许改(需 echo > /proc 直接写)。某些地址族(IPX/AX.25/NET/ROM)输出未实现(原文留 TODO)。"
+    },
+    {
+      "tool": "nstat",
+      "function": "nstat 与 rtacct 共享 man page(rtacct.8)。监控内核 SNMP 计数器(TCP/UDP/ICMP/IP/IPv6 各协议 per-counter)与网络接口统计。nstat 支持按 wildcard 名过滤、增量模式、JSON、daemon 模式;rtacct 显示 per-realm 路由统计。",
+      "key_options": [
+        {
+          "opt": "-z, --zeros",
+          "semantics": "显示值为 0 的 counter(默认不显示)。"
+        },
+        {
+          "opt": "-r, --reset",
+          "semantics": "重置历史(下次读从 0 开始)。"
+        },
+        {
+          "opt": "-n, --nooutput",
+          "semantics": "不显示,仅更新历史(配合 -d 用:后台采更新不刷屏)。"
+        },
+        {
+          "opt": "-a, --ignore",
+          "semantics": "Dump 绝对值(非默认的增量)。默认 nstat 计算与上次读的增量,加 -a 显示累计绝对值。"
+        },
+        {
+          "opt": "-s, --noupdate",
+          "semantics": "不更新历史,下次读包含本次测量累积值。"
+        },
+        {
+          "opt": "-j, --json / -p, --pretty",
+          "semantics": "JSON 输出 / 配合 -j 美化缩进。"
+        },
+        {
+          "opt": "-d, --scan <INTERVAL>",
+          "semantics": "daemon 模式,每 INTERVAL 秒采集一次。"
+        },
+        {
+          "opt": "-t, --interval <INTERVAL>",
+          "semantics": "平均速率的时间窗,默认 60 秒。"
+        },
+        {
+          "opt": "PATTERN [PATTERN ...]",
+          "semantics": "按名过滤 counter,wildcard 大小写不敏感,支持 ? 与 *。例:nstat TcpExt*ListenDrops 或 nstat 'Tcp*Drop*'。"
+        }
+      ],
+      "when_to_use": "buffer-queue-depth:用 nstat TcpExt*Drop*/TcpExt*ListenOverflow* 看 backlog drop 计数(与 /proc/net/softnet_stat 互补:softnet 是 per-CPU 收包,nstat 是 per-counter 协议层);tcp-tuning:用 nstat Tcp* 看 tcp ActiveOpens/PassiveOpens/InSegs/OutSegs/RetransSegs(与 sar -n TCP/ETCP 互补:sar 是采样率,nstat 是计数);udp-and-fib-mem:用 nstat Udp* 看 UDP InDatagrams/OutDatagrams/RcvbufErrors/SndbufErrors(与 sysctl_udp_mem pressure 关联);napi-busy-poll:用 nstat TcpExt* 看 BusyPollRPS/BloomRPS 等(若内核暴露);rps-flow-limit:用 nstat TcpExt/Rx RPS 相关 counter 看 RPS 工作与否(与 /proc/net/softnet_stat received_rps 列互补);ipv6-options-flowlabel:用 nstat Icmp6*/Ip6* 看 IPv6 协议计数;cgroup-net-classification:无直接关系。rule R1-softnet-dropped:nstat TcpExt*ListenDrops 与 softnet drop 互补;R3-rps-not-working:nstat RPS 计数与 softnet received_rps 互补;R5-tcp-mem-pressure:nstat Tcp*Retrans 与 ss -m 互补。",
+      "kernel_alternative": "(无直接替代,本工具是只读观察;对应 sysctl_tcp_mem/sysctl_udp_mem/sysctl_tcp_max_orphans 的 SNMP 计数观察入口,与 sar -n TCP/UDP/ICMP/IP 互补:nstat 是计数器累计/增量,sar 是采样后的速率)",
+      "caveats": "默认显示增量(与上次读之差),要看累计用 -a。history 文件位置(/tmp/.nstat 或类似)需可写,daemon 模式(-d)写更频繁。pattern 大小写不敏感。某些 TcpExt counter 名内核版本相关,跨版本对比要核对 /proc/net/netstat 与 TcpExt 输出名。与 rtacct 共享 man page 但功能不同:rtacct 显示 per-realm 路由统计,nstat 是 SNMP 计数。"
+    },
+    {
+      "tool": "tc",
+      "function": "Traffic Control 配置:qdisc(排队规则)/class(类别)/filter(分类器)/chain(链)。SHAPING(egress 速率塑形)/SCHEDULING(egress 优先级)/POLICING(ingress 限速)/DROPPING(超限丢弃)。net 域发送方向调优核心。",
+      "key_options": [
+        {
+          "opt": "tc qdisc {add|change|replace|link|delete} dev DEV [parent qdisc-id|root] [handle qdisc-id] qdisc [qdisc params]",
+          "semantics": "增/改/删 qdisc。root 是顶层 qdisc。classless qdisc(可 root 直接挂):pfifo/bfifo/fq/fq_codel/fq_pie/codel/pfifo_fast/red/sfb/sfq/tbf/choke/multiq/mqprio/netem/htb(实际 classful);classful qdisc 含子类:HTB/PRIO/DRR/ETS/HFSC/QFQ/ATM。default_qdisc(sysctl)决定新 netdev 默认 qdisc。"
+        },
+        {
+          "opt": "tc class {add|change|replace|delete|show} dev DEV parent qdisc-id [classid class-id] qdisc [params]",
+          "semantics": "增/改 classful qdisc 的子类。classid 格式 major:minor(16 进制)。HTB class 用 rate/ceil/prio 设带宽保证/上限/优先级。"
+        },
+        {
+          "opt": "tc filter {add|change|replace|delete|get} dev DEV [parent|root] [handle filter-id] protocol proto prio priority filtertype [params] flowid flow-id",
+          "semantics": "增/改 filter。filter 决定包入哪个 class。filtertype:basic(ematch)/bpf(经典 BPF 或 eBPF)/cgroup(按 cgroup classid)/flow/flower(按 flow 字段)/fw(按 fwmark)/route(按 route 表)/u32(任意字段)/matchall(匹配所有)。cgroup filter 与 write_classid(net_cls cgroup)配合:按 socket 的 cgroup classid 把包分发到 tc class。"
+        },
+        {
+          "opt": "tc qdisc show / tc class show dev DEV / tc filter show dev DEV [-s statistics] [-d details] [-g graph] [-j json]",
+          "semantics": "查看。-s 统计;-d 详情;-g ASCII 图(配合 -s 显示 class 下统计);-j JSON。"
+        },
+        {
+          "opt": "tc monitor [file FILENAME] / -t, --timestamp / -ts, --tshort",
+          "semantics": "监听内核 qdisc/filter/action 增删改事件。-t/-ts 加时间戳。file 从二进制文件读 netlink 消息而非监听内核。"
+        },
+        {
+          "opt": "tc -n, --netns <NETNS>",
+          "semantics": "切到指定 netns 执行(等价 ip netns exec NETNS tc)。"
+        },
+        {
+          "opt": "RATES/TIMES/SIZES 单位",
+          "semantics": "速率:bit/kbit/mbit/gbit/tbit/bps/kbps/mbps/gbps/tbps 或 % (设备速率百分比)。时间:s/ms/usec 或裸数(微秒)。大小:b/kbit/kb/m/mb/gbit/gb。32 位内部存储,速率上限 ~4Gbps,时间上限 ~4294 秒,大小上限 ~4GB。"
+        }
+      ],
+      "when_to_use": "buffer-queue-depth:用 tc qdisc show -s 看 qdisc 队列堆积/出队统计(与 net_hotdata.qdisc_max_burst 直接相关);tcp-tuning:用 tc qdisc add dev DEV root fq 或 fq_codel 设发送方向 AQM/fair queue(与 TCP cc 配合影响 cwnd/buffer);rps-flow-limit:无直接关系(ingress 是 softirq 层,tc ingress 是另一层);bpf-jit-security:用 tc filter add ... bpf 注入 eBPF filter(与 bpf_jit 互补:filter 是 attach,bpf_jit 是编译执行);ipv6-options-flowlabel:用 tc filter flower 按 IPv6 flow label 分类(与 multipath_hash_policy 互补:hash 决定选路,tc filter 决定 QoS class);cgroup-net-classification:用 tc filter add dev DEV parent root protocol ip prio 1 cgroup(对应 cls_cgroup)按 cgroup classid 分流——这是 write_classid 的下游落地(只设 classid 不挂 tc filter 则分流不生效);netns-and-runtime-misc:用 tc -n 在指定 netns 配置(与 sysctl_fb_tunnels/devconf 互补:sysctl 是策略,tc 是 qdisc);boot-cmdline-sizing:无(boot-only 哈希表大小不改);cipso-netlabel:无(不同子系统)。rule R10-tx-qdisc-stall:tc qdisc show -s 直接看队列深度与 qdisc_max_burst 配合调。",
+      "kernel_alternative": "net_hotdata.qdisc_max_burst(tc qdisc 出队批量是 qdisc_max_burst 的下游执行,qdisc_max_burst 是内核 NAPI TX 出队批量上限)、set_default_qdisc(boot-only no runtime partial:default_qdisc 决定新 netdev 默认 qdisc,但 tc 可运行时改特定 dev 的 qdisc)、weight_p/dev_weight_tx_bias(tc TX qdisc 是发送方向 qdisc,dev_weight_tx_bias 是 NAPI TX 配额,联动)、write_classid(tc cgroup filter 是 write_classid 的下游落地:write_classid 给 socket 打 classid,tc cgroup filter 据此分流)、bpf_jit_enable/bpf_jit_harden/bpf_jit_kallsyms/bpf_jit_limit(tc bpf filter 与 bpf_jit 互补:filter 是 attach,jit 是编译执行)",
+      "caveats": "改 qdisc/class/filter 需 CAP_NET_ADMIN。root qdisc 替换会暂时清空队列(非 atomic unless replace)。classful qdisc(HTB/PRIO/HSFC)需先建 qdisc 再建 class 再加 filter,顺序错会失败。classid/handle 是 major:minor 16 进制,root 是 ffff:ffff,unspecified 是 0:0。qdisc 名(pfifo_fast/fq/fq_codel 等)需内核编译支持(CONFIG_NET_SCHED=y 且对应 qdisc 模块加载)。pfifo_fast 是 'Advanced Router' 内核默认(无 qdisc 配置时)。tc -nm 配合 /etc/iproute2/tc_cls 把 classid 解析为名。RATES 32 位存储,超过 4Gbps 用 mbit 数值会溢出(应用 IEC 或更高单位)。qdisc_max_burst 改后只对新分配的 sd_flow_limit 生效(类似行为):tc qdisc replace 不影响已有 flow。"
+    },
+    {
+      "tool": "lnstat",
+      "function": "统一 Linux 网络统计工具,rtstat 的现代替代。周期性打印 /proc/net/stat/ 下文件(softnet_stat/arp_cache/ndisc_cache/ip_conntrack/nf_conntrack/rt_cache)的选定列。对每 CPU 行求和后打印,每 interval 后只打增量。",
+      "key_options": [
+        {
+          "opt": "-d, --dump",
+          "semantics": "Dump 所有可用统计文件与列名清单。先 -d 看有什么再 -k 选列。"
+        },
+        {
+          "opt": "-f, --file <file>",
+          "semantics": "指定统计文件(可多次),默认扫所有 /proc/net/stat/ 下文件。"
+        },
+        {
+          "opt": "-k, --keys k,k,k,...",
+          "semantics": "只显示指定列。每 key 形如 [file:]key。无 file 限定时搜第一个含该 key 的文件。例:-k softnet_stat:dropped,softnet_stat:time_squeeze。"
+        },
+        {
+          "opt": "-i, --interval <intv>",
+          "semantics": "采样间隔秒数。"
+        },
+        {
+          "opt": "-c, --count <count>",
+          "semantics": "打印 count 次后退出(配合 -i 做定长采样)。"
+        },
+        {
+          "opt": "-s, --subject [0-2]",
+          "semantics": "header 显示策略:0=无 header,1=启动时打一次,2=每 20 行打一次。"
+        },
+        {
+          "opt": "-w, --width n,n,n,...",
+          "semantics": "每列字段宽度。"
+        },
+        {
+          "opt": "-j, --json",
+          "semantics": "JSON 输出。"
+        }
+      ],
+      "when_to_use": "buffer-queue-depth:用 lnstat -k softnet_stat:processed,softnet_stat:dropped,softnet_stat:time_squeeze,softnet_stat:received_rps,softnet_stat:flow_limit_count,softnet_stat:input_qlen,softnet_stat:process_qlen 周期采样 /proc/net/softnet_stat 全 15 列(比 sar -n SOFT 字段更全,且按 interval 打增量——对诊断 NAPI 行为模式更直接);tcp-tuning/udp-and-fib-mem:用 lnstat -k rt_cache:* 看路由缓存(虽然 IP route cache 已移除,部分 counter 仍可读);netns-and-runtime-misc:无(统计文件在 /proc/net/stat/ 全局);ipv6-options-flowlabel:用 lnstat -k ndisc_cache:* 看 IPv6 邻居缓存(与 IPv6 flowlabel 间接关联)。rule R1/R2/R3/R4 都可用 lnstat -k softnet_stat:* 周期采样替代直接 cat /proc/net/softnet_stat。",
+      "kernel_alternative": "(无直接替代,本工具是 /proc/net/stat/ readonly 的周期采样器;对应 readonly softnet_seq_ops 的所有字段。/proc/net/softnet_stat 的 15 列软中断统计、/proc/net/stat/nf_conntrack 的 conntrack 表计数、/proc/net/stat/arp_cache/ndisc_cache 的邻居表统计——这些是 net_hotdata.max_backlog/net_hotdata.netdev_budget/sysctl_fb_tunnels_only_for_init_net 等调参后的观察依据)",
+      "caveats": "/proc/net/stat/rt_cache 的多数 counter 已 deprecated(IP route cache 移除后部分恒为 0,如 in_hit/out_hit/gc_total)。文件含 per-CPU 行,lnstat 求和后打增量——不要直接拿原始文件行数当 CPU 数。key 名跨内核版本可能有差异,先 -d dump 确认。softnet_stat 文件的列顺序与 man page 文档列名是 lnstat 自己解析的 header 行(实际内核输出可能无 header,lnstat 依赖 header 行)。"
+    },
+    {
+      "tool": "sar",
+      "function": "sysstat 包,收集/报告/保存系统活动信息。sar -n {DEV|EDEV|FC|ICMP|EICMP|ICMP6|EICMP6|IP|EIP|IP6|EIP6|NFS|NFSD|SOCK|SOCK6|SOFT|TCP|ETCP|UDP|UDP6} 网络统计;SOFT 关键字直接对应 /proc/net/softnet_stat。",
+      "key_options": [
+        {
+          "opt": "-n {keyword[,...] | ALL}",
+          "semantics": "网络统计。DEV=接口 rxpck/txpck/rxkB/txkB/rxcmp/txcmp/rxmcst/%ifutil;EDEV=接口错误 rxerr/txerr/coll/rxdrop/txdrop/txcarr/rxfram/rxfifo/txfifo;SOFT=softnet_stat total/dropd/squeezd/rx_rps/flw_lim/blg_len(对 net playbook 最关键);TCP=tcp active/passive/iseg/oseg;ETCP=tcp errors atmptf/cesterr/retrans;UDP=udp indgm/outdg/noport/indiscer/outdiscer;ICMP/EICMP=icmp 各类;SOCK=totsck/tcpsck/udpsck/rawsck/ip-frag/tcp-tw;SOCK6=IPv6 同 SOCK;IP/EIP=IP 层;IP6/EIP6=IPv6 层;ICMP6/EICMP6=ICMPv6;NFS/NFSD=NFS;FC=fibre channel。"
+        },
+        {
+          "opt": "-P {cpu_list | ALL}",
+          "semantics": "per-processor 统计。cpu_list 逗号或范围(0,2,4-7)。ALL 全 CPU + 全局平均。对 softnet_stat per-CPU 诊断关键。"
+        },
+        {
+          "opt": "-i interval [count]",
+          "semantics": "采样间隔秒与次数。无 count 持续。interval=0 显示自启动以来平均。"
+        },
+        {
+          "opt": "-o filename / -f filename",
+          "semantics": "-o 保存到二进制文件(默认用 saDD 日文件);-f 从文件读回(可配 -s/-e 选时间段)。"
+        },
+        {
+          "opt": "-s hh:mm:ss / -e hh:mm:ss",
+          "semantics": "起止时间过滤(配合 -f 读历史文件)。"
+        },
+        {
+          "opt": "--iface=iface_list",
+          "semantics": "限制 -n DEV/EDEV 只采指定接口(逗号分隔)。"
+        },
+        {
+          "opt": "-A / --human / --pretty",
+          "semantics": "-A 等价 -bBdFHISvwWy -m ALL -n ALL -q ALL;-human 人类可读单位;--pretty 字段对齐。"
+        }
+      ],
+      "when_to_use": "buffer-queue-depth:用 sar -n SOFT -P ALL 周期采 per-CPU softnet_stat(total/dropd/squeezd/rx_rps/flw_lim/blg_len)——是 /proc/net/softnet_stat 的时序版本,比 lnstat 输出更结构化;tcp-tuning:用 sar -n SOCK 看 totsck/tcpsck/tcp-tw(orphan 量近似 tcp-tw)/ip-frag,与 sysctl_tcp_mem/sysctl_tcp_max_orphans 关联;sar -n TCP/ETCP 看 active/passive/iseg/oseg/atmptf/retrans;udp-and-fib-mem:用 sar -n UDP 看 indgm/outdg/noport/indiscer(与 sysctl_udp_mem pressure 关联);rps-flow-limit:用 sar -n SOFT 看 rx_rps/flw_lim 与 /proc/net/softnet_stat 第 10/11 列对应;ipv6-options-flowlabel:用 sar -n SOCK6/IP6/EIP6/ICMP6/EICMP6 看 IPv6 协议层;netns-and-runtime-misc:无(全局统计,无 per-netns 视图)。rule R1-softnet-dropped:sar -n SOFT 看 dropd;R2-softnet-time-squeeze:sar -n SOFT 看 squeezd;R3-rps-not-working:sar -n SOFT 看 rx_rps;R4-flow-limit-triggered:sar -n SOFT 看 flw_lim;R5-tcp-mem-pressure:sar -n SOCK 看 tcp-tw 与 ETCP retrans。",
+      "kernel_alternative": "(无直接替代,本工具是 /proc/net/* 与 /proc/net/softnet_stat 的周期采样与历史归档;对应 readonly softnet_seq_ops 的 SOFT keyword 视图。SOFT 的 dropd/squeezd/rx_rps/flw_lim/blg_len 与 net_hotdata.max_backlog/weight_p/net_hotdata.netdev_budget/rps_sock_flow_sysctl/flow_limit_cpu_sysctl 调参后的验证观察一一对应)",
+      "caveats": "sar -n SOCK/UDP/TCP/ICMP/IP 等 SNMP 类统计依赖 sadc -S SNMP 选项(默认开);SOFT 依赖 -S IPV6(对 IPv6) 与 sadc 默认开 SOFT。ICMP6/EICMP6/IP6/EIP6/SOCK6 依赖 sadc -S IPV6。sar 数据默认日文件 /var/log/sa/saDD,-f 读回时若 saDD 不存在或 sadc 未跑会失败。SOFT blg_len 是 backlog 长度,与 softnet_stat 第 14/15 列 input_qlen/process_qlen 相关但 sar 求和方式不同。%ifutil 对半双工用 rxkB+txkB/速率,全双工取 max(rxkB,txkB)/速率——半/全双工判断依赖驱动报告。sar 不能改任何内核参数,纯观察。需 sysstat 包安装且 sadc 定时任务(cron 或 systemd timer)开。"
+    },
+    {
+      "tool": "sysctl",
+      "function": "运行时读/写内核参数(/proc/sys/ 下)。variable 读值,variable=value 写值,-p 从配置文件批量加载,-a 列所有。net 域调参的直接入口。",
+      "key_options": [
+        {
+          "opt": "variable",
+          "semantics": "读单个 key,如 sysctl net.ipv4.tcp_mem。输出 'key = value'。'/' 也接受作分隔符代替 '.'。"
+        },
+        {
+          "opt": "variable=value",
+          "semantics": "写 key,如 sysctl -w net.ipv4.tcp_mem='1234 5678 8192'。值含 shell 解析字符需双引号。三值参数用空格分隔加引号。"
+        },
+        {
+          "opt": "-n, --values / -N, --names",
+          "semantics": "-n 只打值不打 key 名;-N 只打 key 名(配合 shell 补全)。"
+        },
+        {
+          "opt": "-w, --write",
+          "semantics": "强制所有参数按写处理,无法解析为写的报错。"
+        },
+        {
+          "opt": "-p [FILE|--load=FILE], --system",
+          "semantics": "从文件加载(无 FILE 时 /etc/sysctl.conf)。- 代替 FILE 从 stdin 读。--system 读所有系统配置文件目录(/etc/sysctl.d/*.conf /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf,优先级从高到低,同名文件后续忽略)。"
+        },
+        {
+          "opt": "-a, --all / --deprecated",
+          "semantics": "-a 显示所有当前可用值(排除 deprecated 与 verboten)。--deprecated 包含 deprecated 参数。"
+        },
+        {
+          "opt": "-r, --pattern pattern",
+          "semantics": "只应用匹配 pattern 的设置(扩展正则)。例:sysctl --pattern '^net.ipv6' --system。"
+        },
+        {
+          "opt": "-e, --ignore / -q, --quiet",
+          "semantics": "-e 忽略 unknown key 错误;-q 不显示已设置的值到 stdout。"
+        },
+        {
+          "opt": "-b, --binary",
+          "semantics": "打印值不带换行。"
+        }
+      ],
+      "when_to_use": "buffer-queue-depth:用 sysctl net.core.netdev_max_backlog net.core.dev_weight net.core.netdev_budget net.core.netdev_budget_usecs net.core.gro_normal_batch net.core.skb_defer_max 读/写所有 NAPI/backlog 参数;tcp-tuning:用 sysctl net.ipv4.tcp_mem net.ipv4.tcp_max_orphans net.ipv4.tcp_low_latency(deprecated 不调) net.ipv4.inet_peer_threshold net.ipv4.inet_peer_minttl net.ipv4.inet_peer_maxttl net.ipv4.fib_sync_mem;udp-and-fib-mem:用 sysctl net.ipv4.udp_mem net.ipv4.fib_sync_mem;napi-busy-poll:用 sysctl net.core.busy_poll net.core.busy_read;rps-flow-limit:用 sysctl net.core.rps_sock_flow_entries net.core.flow_limit_cpu_bitmap net.core.flow_limit_table_len;bpf-jit-security:用 sysctl net.core.bpf_jit_enable net.core.bpf_jit_harden net.core.bpf_jit_kallsyms net.core.bpf_jit_limit;ipv6-options-flowlabel:用 sysctl net.ipv6.bindv6only net.ipv6.auto_flowlabels net.ipv6.flowlabel_reflect net.ipv6.flowlabel_consistency net.ipv6.flowlabel_state_ranges net.ipv6.max_dst_opts_number net.ipv6.max_hbh_opts_number net.ipv6.max_dst_opts_length net.ipv6.max_hbh_length net.ipv6.fib_multipath_hash_policy net.ipv6.fib_multipath_hash_fields net.ipv6.seg6_flowlabel net.ipv6.ioam6_id net.ipv6.ioam6_id_wide net.ipv6.idgen_retries net.ipv6.idgen_delay net.ipv6.ip_nonlocal_bind net.ipv6.fwmark_reflect net.ipv6.anycast_src_echo_reply net.ipv6.fib_notify_on_flag_change;cgroup-net-classification:用 sysctl 无直接关系(classid 走 cgroup fs:echo N > /sys/fs/cgroup/net_cls.classid,CONFIG_CGROUP_NET_CLASSID);netns-and-runtime-misc:用 sysctl net.core.fb_tunnels_only_for_init_net net.core.devconf_inherit_init_net net.core.netdev_unregister_timeout_secs net.core.message_cost net.core.message_burst net.core.high_order_alloc_disable net.core.netdev_tstamp_prequeue net.core.default_qdisc net.core.mem_pcpu_rsv;boot-cmdline-sizing:无(boot-only 参数 sysctl 不触及,改需 grub:fb_tunnels/tcpmhash_entries/uhash_entries/thash_entries/carrier_timeout);cipso-netlabel:用 sysctl net.ipv4.cipso_cache_enable net.ipv4.cipso_cache_bucket_size net.ipv4.cipso_rbm_optfmt net.ipv4.cipso_rbm_strictvalid。所有 rules 的 recommend 阶段都用 sysctl -w 落地。",
+      "kernel_alternative": "net_hotdata.max_backlog/weight_p/dev_weight_rx_bias/dev_weight_tx_bias/net_hotdata.netdev_budget/net_hotdata.netdev_budget_usecs/net_hotdata.qdisc_max_burst/net_hotdata.gro_normal_batch/net_hotdata.sysctl_skb_defer_max/net_hotdata.sysctl_max_skb_frags/net_hotdata.tstamp_prequeue/sysctl_tcp_mem/sysctl_tcp_max_orphans/inet_peer_threshold/inet_peer_minttl/inet_peer_maxttl/sysctl_fib_sync_mem/sysctl_udp_mem/sysctl_net_busy_poll/sysctl_net_busy_read/rps_sock_flow_sysctl/flow_limit_cpu_sysctl/netdev_flow_limit_table_len/bpf_jit_enable/bpf_jit_harden/bpf_jit_kallsyms/bpf_jit_limit/sysctl_fb_tunnels_only_for_init_net/sysctl_devconf_inherit_init_net/netdev_unregister_timeout_secs/net_ratelimit_state.interval/net_ratelimit_state.burst/net_high_order_alloc_disable_key.key/net_hotdata.tstamp_prequeue/net_msg_warn/set_default_qdisc/net_hotdata.sysctl_mem_pcpu_rsv/init_net.ipv6.sysctl.*/cipso_v4_cache_enabled/cipso_v4_cache_bucketsize/cipso_v4_rbm_optfmt/cipso_v4_rbm_strictvalid(write_classid/sysctl 路径不同:write_classid 走 /sys/fs/cgroup/net_cls.classid,sysctl 命令读 /proc/sys/;fb_tunnels_only_for_init_net_sysctl_setup/set_tcpmhash_entries/set_uhash_entries/set_thash_entries/set_carrier_timeout 是 boot-only no runtime,sysctl 改不了需改 grub)",
+      "caveats": "改 net 参数需 CAP_NET_ADMIN(CAP_SYS_ADMIN 部分场景)。bpf_jit_harden/bpf_jit_kallsyms/bpf_jit_limit 写需 CAP_SYS_ADMIN(man 原文 README)。sysctl -a 跳过 verboten(如 stat_refresh 有副作用)与 deprecated。base_reachable_time 与 retrans_time 是 deprecated,sysctl 不允许改——要改需 echo > /proc/sys/.../.../base_reachable_time。值含空格(三值 tcp_mem/udp_mem)必须引号。--system 与 -p 优先级:同名文件高优先级目录覆盖低优先级,后续忽略。pattern 用 ERE。改 sysctl 不持久(重启失效),要持久写 /etc/sysctl.d/*.conf。"
+    },
+    {
+      "tool": "systemd-run",
+      "function": "在临时 .scope/.service/.path/.socket/.timer 单元中跑命令,通过 --property= 设 cgroup 资源控制属性。net 域的网络 cgroup 入口(IPAccounting=/IPAddressAllow=/IPAddressDeny=/PrivateNetwork=/NetworkNamespacePath=)与 cpuset 绑核(AllowedCPUs=,影响 RPS/RSS 跨 CPU 分发空间)在此落地。",
+      "key_options": [
+        {
+          "opt": "--scope / --service-type=",
+          "semantics": "--scope 建 .scope(由 systemd-run 自己作父进程,继承环境,同步执行);--service-type= 设服务类型(默认 simple,建议 exec 确保命令真启动)。"
+        },
+        {
+          "opt": "-p, --property=",
+          "semantics": "设属性,格式同 systemctl set-property。net 相关:IPAccounting=(bool 开 IPv4/IPv6 流量计费)、IPAddressAllow=ADDR[/PREFIX].../IPAddressDeny=ADDR[/PREFIX]...(IP 防火墙,symbolic name 如 any/link-local/multicast)、IPIngressFilterPath=/IPEgressFilterPath=(挂 BPF eBPF 程序做 ingress/egress 过滤)、BPFProgram=ingress:|egress:PATH(另一种 BPF 挂载方式)、PrivateNetwork=(bool 建 netns 只留 lo,关网络访问)、NetworkNamespacePath=/proc/PID/ns/net 或 bind mount(用既有 netns,优先于 PrivateNetwork)、AllowedCPUs=/StartupAllowedCPUs=(cpuset 绑核,影响 RPS/RSS 跨 CPU 空间)、DevicePolicy=/DeviceAllow=(设备访问策略)。详见 systemd.resource-control(5) 与 systemd.exec(5)。"
+        },
+        {
+          "opt": "--slice= / --slice-inherit",
+          "semantics": "把新单元放入指定 slice(否则 system.slice 或用户 root slice)。--slice-inherit 放入 systemd-run 自身所在 slice(可与 --slice= 组合为子 slice)。"
+        },
+        {
+          "opt": "-r, --remain-after-exit / -G, --collect",
+          "semantics": "-r 进程退出后保留单元(便于采运行时信息);-G 完成后卸载单元(无论成败,等价 CollectMode=inactive-or-failed)。"
+        },
+        {
+          "opt": "--user / --wait / --no-block",
+          "semantics": "--user 对用户 service manager;--wait 同步等结束并显示计费(CPU/内存/IO);--no-block 异步不入队。--wait 与 --scope/--no-block 互斥。"
+        },
+        {
+          "opt": "-E NAME[=VALUE] / --uid= / --gid= / --nice=",
+          "semantics": "环境变量/用户/组/nice。"
+        }
+      ],
+      "when_to_use": "cgroup-net-classification:用 -p IPAccounting=yes 给 cgroup 开 IPv4/IPv6 流量计费(只读观察,与 write_classid 互补:write_classid 是 v1 net_cls 给 socket 打 classid,IPAccounting 是 v2 流量计费,语义不同);用 -p IPAddressDeny=any -p IPAddressAllow=10.0.0.0/8 做 IP 防火墙白名单(替代部分 iptables 场景);用 -p IPIngressFilterPath=/path/to/prog.o 挂 eBPF ingress filter(与 bpf_jit 互补:filter 是 attach,bpf_jit 是编译执行);buffer-queue-depth:用 -p AllowedCPUs=0-3 把 cgroup 限到部分 CPU,影响 RPS/RSS 跨 CPU 分发空间(与 flow_limit_cpu_sysctl 互补:flow_limit 是 per-CPU 位图,AllowedCPUs 是 cgroup 级 cpuset);rps-flow-limit:用 -p AllowedCPUs= 把网卡 IRQ 所在 CPU 与 cgroup CPU 分离看 RPS 是否生效;bpf-jit-security:用 -p BPFProgram=ingress:PATH / IPEgressFilterPath= 挂 eBPF(与 bpf_jit_enable/harden 互补:attach 与编译执行不同层);ipv6-options-flowlabel:用 -p IPAddressAllow=2001:db8::/32 设 IPv6 白名单;netns-and-runtime-misc:用 -p PrivateNetwork=yes 建私有 netns(只 lo,验证 fb_tunnels_only_for_init_net/devconf_inherit 行为);用 -p NetworkNamespacePath=/run/netns/NAME 复用既有 netns(等价 ip netns exec 但 cgroup 级);boot-cmdline-sizing:无(boot-only 参数 systemd-run 不触及)。rule R4-flow-limit-triggered 与 R3-rps-not-working 的 cgroup 级 cpuset 落地手段。",
+      "kernel_alternative": "write_classid(-p IPAccounting= 是 v2 流量计费,write_classid 是 v1 net_cls 打 classid,语义不同;v7.2 cgroup v2 unified 上 net_cls cgroup v1 已 deprecated,IPAccounting/IPAddress* 是 v2 现代等价)、flow_limit_cpu_sysctl(-p AllowedCPUs= 是 cgroup 级 cpuset 限制 CPU 集,flow_limit_cpu 是内核 per-CPU flow limit 位图,互补)、bpf_jit_enable/bpf_jit_harden/bpf_jit_kallsyms/bpf_jit_limit(-p IPIngressFilterPath=/IPEgressFilterPath=/BPFProgram= 是 BPF attach 到 cgroup ingress/egress,bpf_jit 是 BPF 编译执行总开关)、sysctl_fb_tunnels_only_for_init_net/sysctl_devconf_inherit_init_net(-p PrivateNetwork=/NetworkNamespacePath= 是 cgroup 级 netns 入口,sysctl 是策略开关)、fb_tunnels_only_for_init_net_sysctl_setup/set_tcpmhash_entries/set_uhash_entries/set_thash_entries/set_carrier_timeout(boot-only no runtime:systemd-run 不触及 boot-only 参数)",
+      "caveats": "默认 Type=simple,manager 在 fork 成功后即认为启动成功(execve 前返回),命令可能没起来也算成功——要确保真启动用 --service-type=exec。$ 字符会被 manager 变量扩展,要禁用 --expand-environment=no(--scope 默认禁用)。--scope 与 --wait/--pty/--on-* 互斥。man 原文:IPAccounting 目前仅系统服务可用,非 per-user 服务。IPAddressAllow=/Deny= 在 parent slice 设了会继承到 child,推荐 parent 设 IPAddressDeny=any + child 单独 IPAddressAllow= 白名单。socket-activated service 的 IP 过滤配置在 socket unit 与 service unit 上独立应用且不传播——需在两边都配。PrivateNetwork=yes 会 disconnect 所有 socket family 与 host,JoinsNamespaceOf= 可让多 unit 共享同一私有 netns。NetworkNamespacePath 优先于 PrivateNetwork,且会触发 PrivateMounts=yes 重挂 /sys。"
+    },
+    {
+      "tool": "ip netns",
+      "function": "ip netns 子命令是 ip(8) 的 netns 操作入口,但因 net playbook 多 cap(netns-and-runtime-misc/boot-cmdline-sizing 等)涉及 netns 单独列条。逻辑上与 ip 同二进制,功能见 ip(8) man page。建/删/列/exec/identify/pids/set/monitor/list-id 网络命名空间。",
+      "key_options": [
+        {
+          "opt": "ip netns list",
+          "semantics": "列 /run/netns 下所有命名 netns。"
+        },
+        {
+          "opt": "ip netns add NAME",
+          "semantics": "建命名 netns(/run/netns/NAME)。fd 持有保持 netns 存活。"
+        },
+        {
+          "opt": "ip netns attach NAME PID",
+          "semantics": "把已有进程 PID 的 netns 命名为 NAME(等价 add 但不新建)。"
+        },
+        {
+          "opt": "ip [-all] netns del [NAME]",
+          "semantics": "删命名(umount + 删 mount point)。最后一个 user 退出后 netns 才释放,物理设备移回 default netns。-all 删所有。"
+        },
+        {
+          "opt": "ip netns set NAME NETNSID",
+          "semantics": "给 peer netns 分配 id(仅在当前 netns 有效)。NETNSID=auto 让内核选。一旦分配不可改。"
+        },
+        {
+          "opt": "ip netns identify [PID]",
+          "semantics": "报告 PID 所属 netns 名(走 /run/netns)。无 PID 用当前进程。"
+        },
+        {
+          "opt": "ip netns pids NAME",
+          "semantics": "报告在 NAME netns 内的所有进程(/proc 扫 primary netns)。del 前用它 xargs kill 防止网卡延迟回收。"
+        },
+        {
+          "opt": "ip [-all] netns exec [NAME] cmd ...",
+          "semantics": "在 NAME netns 跑 cmd。自动 bind mount /etc/netns/NAME/* 到 /etc/(resolv.conf 等)使 netns-unaware 应用也能用。-all 在每个命名 netns 同步执行 cmd。"
+        },
+        {
+          "opt": "ip netns monitor",
+          "semantics": "监听 netns 增删事件。"
+        },
+        {
+          "opt": "ip netns list-id [target-nsid N] [nsid N]",
+          "semantics": "列 nsid 及对应 iproute2 名(若 /run/netns 有)。target-nsid 选目标 netns 视角,nsid 选特定 nsid;组合用可做 nsid 在两个 netns 间转换。"
+        }
+      ],
+      "when_to_use": "netns-and-runtime-misc:用 ip netns list/add/exec 验证 sysctl_fb_tunnels_only_for_init_net(0=每 netns 建 fallback tunnel/1=仅 init_net/2=都不建)与 sysctl_devconf_inherit_init_net(0~3 枚举)行为;容器/多 netns 场景用 ip netns exec 在指定 netns 跑诊断命令;buffer-queue-depth:用 ip -n NETNS -s link 在指定 netns 看接口统计;tcp-tuning:用 ip -n NETNS route 看 per-netns 路由表;ipv6-options-flowlabel:用 ip -6 -n NETNS route 看 IPv6 ECMP;boot-cmdline-sizing:用 ip netns list 看是否如 sysctl 期望建/不建 fallback tunnel。无直接 rule 映射(规则主要在 default netns),但 rule R1/R2 验证 ip -n NETNS -s link 可在容器场景定位 per-netns 接口层 drop。",
+      "kernel_alternative": "sysctl_fb_tunnels_only_for_init_net(ip netns 是建/进/管操作入口,sysctl 是 fallback tunnel 策略开关)、sysctl_devconf_inherit_init_net(ip netns exec 后 ip addr 显示 IPv4/IPv6 devconf 是否如 sysctl 继承/重置)、fb_tunnels_only_for_init_net_sysctl_setup(boot-only no runtime:ip netns 不触及 boot-only cmdline fb_tunnels=,改需 grub;但运行时 ip netns add 后 sysctl fb_tunnels_only_for_init_net 改仍影响新 netns)、netdev_unregister_timeout_secs(ip netns del 触发网卡注销,timeout_secs 决定超时强制释放)",
+      "caveats": "man 原文:某些设备不允许换 netns(loopback/bridge/wireless 是 netns-local),换会报 'Invalid argument'。用 ethtool -k DEV 看 netns-local flag。wireless 改 netns 只能用 iw 且仅物理设备按 PID。ip netns del 若 netns 内有进程占用,网卡会延迟到进程退出才回 default——del 前先 ip netns pids NAME | xargs kill。netns 名仅在当前 mount namespace 的 /run/netns 可见(不同 mount namespace 看到不同集合)。ip netns exec 自动 bind mount /etc/netns/NAME/* 到 /etc/,但 netns-unaware 应用若硬编码 /etc/resolv.conf 之外路径可能仍读 host 配置。ip netns exec 创建 mount namespace,对 systemd 单元等可能产生副作用。nsid 一旦分配不可改。"
+    }
+  ]
+}
