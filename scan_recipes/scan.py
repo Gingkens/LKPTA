@@ -21,8 +21,8 @@ The recipe supplies the rest: control_entry (resolved userspace path) and gate
 (CONFIG_* guards). Columns are 1-to-1 with what the producer asked for.
 
 Usage:
-    scan.py --recipe scan_recipes/sched.json --ksrc /home/lgk/linux
-    scan.py --recipe scan_recipes/sched.json --ksrc /home/lgk/linux --out brief.tsv
+    scan.py --recipe scan_recipes/v7.2-rc7/sched.json --ksrc /home/lgk/linux
+    scan.py --recipe scan_recipes/v7.2-rc7/sched.json --ksrc /home/lgk/linux --out brief.tsv
 
 Columns (one parameter per line):
     id  kernel_name  userspace_name  control_entry  file_symbol  type  gate
@@ -387,142 +387,289 @@ def _dir_parent_var(body, dir_name):
     return m.group(1) if m else None
 
 
+def _build_dir_tree(text):
+    """Parse `VAR = debugfs_create_dir(...)` assignments in body, build a
+    tree: dict[var_name] -> {name, parent_var, is_per_cpu, children:[]}.
+
+    Two forms:
+      VAR = debugfs_create_dir("name", PARENT)      -> named dir (name=string)
+      VAR = debugfs_create_dir(BUF_VAR, PARENT)      -> per-cpu dir (name=variable)
+
+    The parent relationship is read from the source assignment chain, not
+    from recipe — the source itself expresses "numa's parent is debugfs_sched"
+    via `numa = debugfs_create_dir("numa_balancing", debugfs_sched)`.
+    """
+    tree = {}
+    # match VAR = debugfs_create_dir(<arg1>, <arg2>) — arg1 is name (string) or buf (var)
+    for m in re.finditer(
+        r'(\w+)\s*=\s*debugfs_create_dir\s*\(\s*("[^"]+"|[A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)',
+        text):
+        var, name_arg, parent = m.group(1), m.group(2), m.group(3)
+        is_per_cpu = not name_arg.startswith('"')
+        name = name_arg.strip('"') if not is_per_cpu else None
+        tree[var] = {
+            'name': name, 'parent_var': parent,
+            'is_per_cpu': is_per_cpu, 'children': [],
+        }
+    return tree
+
+
+def _harvest_debugfs_leaves(text, parent_var):
+    """Scan debugfs_create_file/u32/... calls whose parent arg == parent_var.
+    Returns list of {name, kernel_name, mode}. Handles:
+      debugfs_create_u32("n", mode, parent, &var)          (4-param, var=args[1])
+      debugfs_create_file("n", mode, parent, data, &fops)  (5-param, fops=args[-1])
+    Cast parens like (void *) cpu and multi-line calls are handled by paren
+    balancing from the opening '(' to the matching ')'.
+    """
+    leaves = []
+    for m in re.finditer(
+        r'debugfs_create_(\w+)\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*,',
+        text):
+        api, name, mode = m.group(1), m.group(2), m.group(3)
+        if api == 'dir':
+            continue  # dirs handled by _build_dir_tree
+        # walk to matching close paren to capture rest of args
+        i = m.end()
+        depth = 1
+        n = len(text)
+        while i < n and depth > 0:
+            c = text[i]
+            if c == '"':
+                i += 1
+                while i < n and text[i] != '"':
+                    i += 2 if text[i] == '\\' else 1
+                i += 1
+                continue
+            if c == '(':
+                depth += 1
+            elif c == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        rest = text[m.end():i]
+        args = _split_args(rest)
+        parent_arg = args[0].strip() if args else ''
+        if parent_arg != parent_var:
+            continue
+        # 5-param create_file: args=[parent, data, &fops] -> kn=args[-1]
+        # 4-param create_u32:  args=[parent, &var]         -> kn=args[1]
+        if len(args) >= 3:
+            kn = _clean_kernel_name(args[-1].strip())
+        else:
+            var = args[1].strip() if len(args) > 1 else ''
+            kn = _clean_kernel_name(var if var and var != 'NULL' else '')
+        leaves.append({'name': name, 'kernel_name': kn, 'mode': mode, 'kind': api})
+    return leaves
+
+
+def _harvest_unscoped_leaves(text):
+    """Scan ALL debugfs_create_file/u32/... in body, ignoring parent arg.
+    Used for child_locator body (e.g. register_sd) where create_file calls
+    use a `parent` parameter variable not in this dir's tree — those files
+    belong to the dir but can't be matched by parent_var."""
+    leaves = []
+    for m in re.finditer(
+        r'debugfs_create_(\w+)\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*,',
+        text):
+        api, name, mode = m.group(1), m.group(2), m.group(3)
+        if api == 'dir':
+            continue
+        i = m.end()
+        depth = 1
+        n = len(text)
+        while i < n and depth > 0:
+            c = text[i]
+            if c == '"':
+                i += 1
+                while i < n and text[i] != '"':
+                    i += 2 if text[i] == '\\' else 1
+                i += 1
+                continue
+            if c == '(':
+                depth += 1
+            elif c == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        rest = text[m.end():i]
+        args = _split_args(rest)
+        if len(args) >= 3:
+            kn = _clean_kernel_name(args[-1].strip())
+        else:
+            var = args[1].strip() if len(args) > 1 else ''
+            kn = _clean_kernel_name(var if var and var != 'NULL' else '')
+        leaves.append({'name': name, 'kernel_name': kn, 'mode': mode, 'kind': api})
+    return leaves
+
+
+def _harvest_sdm(text):
+    """SDM(type, mode, member) macro -> {name=member, kernel_name='sd->member', mode}.
+    Masks preprocessor lines so the #define SDM(...) line isn't matched."""
+    masked = re.sub(r'(?m)^[ \t]*#[^\n]*',
+                    lambda mm: ' ' * len(mm.group(0)), text)
+    out = []
+    for m in re.finditer(r'\bSDM\s*\(\s*(\w+)\s*,\s*(\d+)\s*,\s*(\w+)\s*\)', masked):
+        typ, mode, member = m.group(1), m.group(2), m.group(3)
+        out.append({'name': member, 'kernel_name': 'sd->' + member,
+                    'mode': mode, 'kind': typ})
+    return out
+
+
 def _rows_debugfs(src, recipe_source, ksrc):
-    """debugfs_create_dir -> one row per child node actually attached to it."""
+    """debugfs_create_dir: parse VAR=create_dir assignment chain to build dir
+    tree, recursively walk it producing rows. Recipe's `dirs` list names which
+    dirs to process (string names scan auto-reads + cross-checks vs source).
+    Per-cpu subdirs (dir-name is a variable) use child_dir_template for path.
+    """
     filt = recipe_source.get('filter', {}) or {}
     prefix = recipe_source.get('path_prefix', '')
     locator = recipe_source.get('locator', '')
     srcobj, _ = _resolve(ksrc, locator)
     text = srcobj.text
 
-    dir_name = filt.get('dir')
+    # New format: recipe.dirs (list of {name, parent, children, config})
+    # New format: source.dirs (list); old: source.filter.dir (single)
+    dirs_list = recipe_source.get('dirs') or filt.get('dirs') or []
+    if not dirs_list and filt.get('dir'):
+        # compat: single-dir old format -> treat as one-element dirs list
+        dirs_list = [{'name': filt['dir'],
+                      'children': (filt.get('children', {}) or {}).get('files', []) +
+                                  (filt.get('children', {}) or {}).get('u32', [])}]
+    child_dir_template = (recipe_source.get('child_dir_template') or
+                          filt.get('child_dir_template') or filt.get('layout'))
+    # child_locator(SDM 在另一函数)只在旧格式用,新格式暂留兼容
     child_loc = filt.get('child_locator')
 
-    nodes = []
-
-    def harvest_direct(body_text, base_src, parent_var):
-        """Scan debugfs_create_* calls; if parent_var given, keep only those
-        whose parent argument == parent_var (precise dir scoping).
-
-        The call may span several physical lines and embed cast parens like
-        (u32 *), so we balance parens from the opening '(' to the matching ')'
-        rather than stopping at the first ')'.
-        """
-        for m in re.finditer(
-            r'debugfs_create_(\w+)\s*\(\s*"([^"]+)"\s*,\s*(\d+)\s*,',
-            body_text):
-            api, name, mode = m.group(1), m.group(2), m.group(3)
-            if api == 'dir':
-                continue
-            # walk to the matching close paren of this call
-            i = m.end()
-            depth = 1
-            n = len(body_text)
-            while i < n and depth > 0:
-                c = body_text[i]
-                if c == '"':
-                    # skip a string literal
-                    i += 1
-                    while i < n and body_text[i] != '"':
-                        if body_text[i] == '\\':
-                            i += 2
-                        else:
-                            i += 1
-                    i += 1
-                    continue
-                if c == '(':
-                    depth += 1
-                elif c == ')':
-                    depth -= 1
-                if depth == 0:
-                    break
-                i += 1
-            rest = body_text[m.end():i]
-            # split top-level args (commas not nested inside parens)
-            args = _split_args(rest)
-            parent_arg = args[0].strip() if args else ''
-            if parent_var and parent_arg != parent_var:
-                continue
-            var = args[1].strip() if len(args) > 1 else ''
-            fops = args[2].strip() if len(args) > 2 else ''
-            kn = _clean_kernel_name(var if var and var != 'NULL' else fops)
-            nodes.append({
-                'name': name,
-                'kind': api,
-                'kernel_name': kn,
-                'mode': mode,
-                'file': base_src.relpath,
-                'symbol': getattr(base_src, 'symbol', '') or '',
-            })
-
-    def harvest_sdm(body_text, base_src):
-        """Local SDM(type, mode, member) macro calls -> field name + mode."""
-        # mask preprocessor lines so the #define SDM(...) line is not matched
-        # but offsets stay aligned with body_text (mask, don't delete).
-        masked = re.sub(r'(?m)^[ \t]*#[^\n]*',
-                        lambda mm: ' ' * len(mm.group(0)), body_text)
-        for m in re.finditer(
-            r'\bSDM\s*\(\s*(\w+)\s*,\s*(\d+)\s*,\s*(\w+)\s*\)', masked):
-            typ, mode, member = m.group(1), m.group(2), m.group(3)
-            nodes.append({
-                'name': member,
-                'kind': typ,
-                'kernel_name': 'sd->' + member,
-                'mode': mode,
-                'file': base_src.relpath,
-                'symbol': getattr(base_src, 'symbol', '') or '',
-            })
-
-    # Scope: if the dir has a local handle (var = debugfs_create_dir(...)),
-    # only collect nodes attached to that handle. If the recipe names a dir
-    # but the source has no `VAR = debugfs_create_dir("<dir>", ...)` (the dir
-    # doesn't exist in THIS kernel version — e.g. a v7.2-only dir scanned
-    # against v7.1 source), parent_var is None and we must NOT fall through
-    # to unfiltered harvesting (that would mis-attribute every create_* call
-    # in the function to this dir). Return zero rows for a dir that isn't
-    # present in the source.
-    parent_var = _dir_parent_var(text, dir_name) if dir_name else None
-    if dir_name and not parent_var:
-        return []
-    harvest_direct(text, srcobj, parent_var)
-
-    # SDM nodes live in the child_locator body (register_sd), not in every
-    # dir's own function. Only harvest SDM from the child_locator body so a
-    # dir source that merely references register_sd does not duplicate them.
+    # Build dir tree from source: var -> {name, parent_var, is_per_cpu}
+    tree = _build_dir_tree(text)
+    # var -> leaves (file/u32 calls with that var as parent)
+    leaves_by_var = {}
+    for var in tree:
+        leaves_by_var[var] = _harvest_debugfs_leaves(text, var)
+    # SDM + unscoped create_file leaves from child_locator body (e.g. register_sd)
+    # — these calls use a `parent` parameter variable not in this dir's tree,
+    # so can't be matched by parent_var. Collect them unscoped, attach to the
+    # last dir in dirs_list (convention: the dir the child_locator serves).
+    sdm_leaves = []
+    sdm_target_var = None
     if child_loc:
         cobj, _ = _resolve(ksrc, child_loc)
-        harvest_direct(cobj.text, cobj, None)
-        harvest_sdm(cobj.text, cobj)
-
-    # de-dup by name (keep first), skip the dir itself
-    seen = set()
-    uniq = []
-    for n in nodes:
-        if dir_name and n['name'] == dir_name:
-            continue
-        if n['name'] in seen:
-            continue
-        seen.add(n['name'])
-        uniq.append(n)
+        sdm_leaves = _harvest_sdm(cobj.text)
+        sdm_leaves += _harvest_unscoped_leaves(cobj.text)
+        if dirs_list:
+            sdm_target_var = _find_dir_var(tree, dirs_list[-1]['name'])
 
     rows = []
-    # Prefer child_dir_template (relative, e.g. cpuN/domainN) over the full
-    # layout string (which may repeat the dir name already present in prefix).
-    child_dir = filt.get('child_dir_template') or filt.get('layout')
-    for n in uniq:
-        if child_dir:
-            ce = prefix.rstrip('/') + '/' + child_dir + '/' + n['name']
+    for d in dirs_list:
+        dir_name = d['name']
+        expected_children = d.get('children', [])
+        var = _find_dir_var(tree, dir_name)
+        if not var:
+            # dir not in source (e.g. v7.2-only dir scanned vs older source)
+            # claim_extra: recipe lists children but scan found none
+            continue
+        # path: top-level dir -> path_prefix (already contains its name);
+        # sub-dir -> parent's path + '/' + this dir's name
+        parent_name = d.get('parent')
+        if parent_name:
+            parent_var = _find_dir_var(tree, parent_name)
+            parent_path = _dir_path(tree, parent_var, prefix)
+            this_prefix = parent_path.rstrip('/') + '/' + dir_name
         else:
-            ce = prefix.rstrip('/') + '/' + n['name']
+            this_prefix = prefix  # path_prefix already contains top-level dir name
+        # walk this dir + its per-cpu subdirs (recursively)
+        _emit_dir_rows(tree, var, this_prefix, child_dir_template,
+                       leaves_by_var, sdm_leaves if sdm_target_var == var else [],
+                       file_relpath=srcobj.relpath, symbol=srcobj.symbol or '',
+                       rows=rows)
+
+    return rows
+
+
+def _find_dir_var(tree, name):
+    """Find the var name in tree whose dir name == name (string dirs only)."""
+    for var, node in tree.items():
+        if not node['is_per_cpu'] and node['name'] == name:
+            return var
+    return None
+
+
+def _dir_path(tree, var, root_prefix):
+    """Compute the full path of a dir by walking parent chain to root.
+    Top-level dir (parent_var not in tree, e.g. NULL) has path = root_prefix
+    (path_prefix already contains its name). Sub-dirs append their names."""
+    parts = []
+    cur = var
+    seen = set()
+    while cur and cur in tree and cur not in seen:
+        seen.add(cur)
+        node = tree[cur]
+        if node['is_per_cpu']:
+            break
+        # top-level dir (parent not in tree, e.g. NULL) — its name is already
+        # in root_prefix, don't append
+        parent = node['parent_var']
+        if not parent or parent not in tree or parent == 'NULL':
+            break
+        parts.insert(0, node['name'])
+        cur = parent
+    return root_prefix.rstrip('/') + ('/' + '/'.join(parts) if parts else '')
+
+
+def _emit_dir_rows(tree, var, path_prefix, child_dir_template,
+                   leaves_by_var, sdm_leaves, file_relpath, symbol, rows):
+    """Emit rows for a dir and its per-cpu subdirs (recursive)."""
+    node = tree.get(var)
+    if not node:
+        return
+    # leaves directly under this dir (file/u32)
+    for leaf in leaves_by_var.get(var, []):
+        # path: this dir's path + leaf name (per-cpu subdir adds its template layer)
+        leaf_path = path_prefix.rstrip('/') + '/' + leaf['name']
         rows.append({
-            'kernel_name': n['kernel_name'],
-            'userspace_name': n['name'],
-            'control_entry': ce,
-            'file_symbol': f"{n['file']}:{n.get('symbol','') or n.get('line','')}",
-            'type': _mode_to_type(n['mode']),
+            'kernel_name': leaf['kernel_name'],
+            'userspace_name': leaf['name'],
+            'control_entry': leaf_path,
+            'file_symbol': f"{file_relpath}:{symbol}",
+            'type': _mode_to_type(leaf['mode']),
             'gate': '',
         })
-    return rows
+    # SDM + unscoped leaves (if this dir is the SDM host) — these belong to
+    # this dir but live in child_locator body; if recipe gave child_dir_template,
+    # they live under that template layer (e.g. domains/cpuN/domainN/flags).
+    if sdm_leaves:
+        sdm_path = path_prefix.rstrip('/')
+        if child_dir_template:
+            sdm_path = sdm_path + '/' + child_dir_template
+        for leaf in sdm_leaves:
+            rows.append({
+                'kernel_name': leaf['kernel_name'],
+                'userspace_name': leaf['name'],
+                'control_entry': sdm_path + '/' + leaf['name'],
+                'file_symbol': f"{file_relpath}:{symbol}",
+                'type': _mode_to_type(leaf['mode']),
+                'gate': '',
+            })
+    # recurse into per-cpu subdirs (dir-name is variable) — use child_dir_template
+    for child_var, child_node in tree.items():
+        if child_node['parent_var'] == var and child_node['is_per_cpu']:
+            if not child_dir_template:
+                continue
+            sub_path = path_prefix.rstrip('/') + '/' + child_dir_template
+            # leaves under the per-cpu subdir
+            for leaf in leaves_by_var.get(child_var, []):
+                leaf_path = sub_path.rstrip('/') + '/' + leaf['name']
+                rows.append({
+                    'kernel_name': leaf['kernel_name'],
+                    'userspace_name': leaf['name'],
+                    'control_entry': leaf_path,
+                    'file_symbol': f"{file_relpath}:{symbol}",
+                    'type': _mode_to_type(leaf['mode']),
+                    'gate': '',
+                })
 
 
 def _rows_sched_feat(src, recipe_source, ksrc):
@@ -574,7 +721,7 @@ def _rows_sysctl(src, recipe_source, ksrc):
     locator = recipe_source.get('locator', '')
     init_src, _ = _resolve(ksrc, locator)
 
-    table = filt.get('table')
+    table = recipe_source.get('table') or filt.get('table')
     if not table:
         # Match several sysctl registration call shapes. The table var is the
         # argument right after the quoted path string:
@@ -623,7 +770,7 @@ def _rows_cftype(src, recipe_source, ksrc):
     """cftype -> one row per .name in the cftype array."""
     filt = recipe_source.get('filter', {}) or {}
     prefix = recipe_source.get('path_prefix', '')
-    cft_loc = filt.get('cftype_locator') or recipe_source.get('locator', '')
+    cft_loc = recipe_source.get('cftype_locator') or filt.get('cftype_locator') or recipe_source.get('locator', '')
     srcobj, _ = _resolve(ksrc, cft_loc)
     # an unscoped view of the same file, for accurate #ifdef gate tracking
     relpath = cft_loc.split(':')[0]
@@ -658,54 +805,75 @@ def _rows_cftype(src, recipe_source, ksrc):
     return rows
 
 
-def _rows_proc(src, recipe_source, ksrc):
-    """proc_pid_entry -> one row per REG/ONE in the pid entry table.
-
-    kernel_name prefers the per-file ops symbol captured from the REG/ONE call
-    (e.g. proc_pid_maps_operations, proc_mem_operations) — it is the stable,
-    per-file identifier the producer greps to reach that file's implementation.
-    filter.show (a recipe-supplied .show callback) is only used as a fallback
-    when the ops symbol is absent (rare; e.g. ONE entries using a bare func).
-    """
+def _proc_resolve_common(recipe_source, ksrc):
+    """共用:解析 recipe 的 locator/path_prefix/expected/child_dir,返回
+    (srcobj, base, relpath, symbol, prefix, expected_set, child_dir)。
+    所有 proc 类提取器都从这开始,减重复。"""
     filt = recipe_source.get('filter', {}) or {}
     prefix = recipe_source.get('path_prefix', '')
     locator = recipe_source.get('locator', '')
     srcobj, _ = _resolve(ksrc, locator)
-    relpath = locator.split(':')[0]
+    relpath = locator.split(':')[0] if ':' in locator else locator
     base = Source(ksrc, relpath)
-    expected = filt.get('name')
-    expected_set = set([expected]) if isinstance(expected, str) else set(expected or [])
-    # recipe may name a .show callback (file:func) as fallback when ops absent
+    symbol = (srcobj.symbol if getattr(srcobj, 'symbol', None) else
+              (locator.split(':')[1].split()[0] if ':' in locator else ''))
+    expected = filt.get('name') or recipe_source.get('names')
+    if isinstance(expected, str):
+        expected_set = {expected}
+    elif isinstance(expected, list):
+        expected_set = set(expected)
+    else:
+        expected_set = set()
+    child_dir = filt.get('child_dir_template') or filt.get('layout')
+    return srcobj, base, relpath, symbol, prefix, expected_set, child_dir
+
+
+def _proc_emit(name, kn, mode_or_flags, srcobj, m_start, base, prefix,
+               child_dir, expected_set, relpath, symbol, rows, flags_mode=False):
+    """共用:expected 过滤 + gate 提取 + path 拼接 + row 输出。
+    flags_mode=True 时 mode 是 S_IRUGO|S_IWUSR 形式(_mode_flags_to_type),
+    False 时是数字 0644 (_mode_to_type)。"""
+    if expected_set and name not in expected_set:
+        return
+    abs_pos = (srcobj.body_start if hasattr(srcobj, 'body_start') else 0) + m_start
+    gate = _ifdef_stack(base.text, abs_pos)
+    base_seg = os.path.basename(prefix.rstrip('/'))
+    if child_dir:
+        ce = prefix.rstrip('/') + '/' + child_dir + '/' + name
+    elif base_seg == name:
+        ce = prefix  # prefix 已含 name(/proc/schedstat),不重复
+    else:
+        ce = prefix.rstrip('/') + '/' + name
+    t = _mode_flags_to_type(mode_or_flags) if flags_mode else _mode_to_type(mode_or_flags)
+    rows.append({
+        'kernel_name': kn,
+        'userspace_name': name,
+        'control_entry': ce,
+        'file_symbol': f"{relpath}:{symbol}",
+        'type': t,
+        'gate': ' '.join(sorted(gate)) if gate else '',
+    })
+
+
+def _rows_proc(src, recipe_source, ksrc):
+    """proc_pid_entry -> one row per REG/ONE in the pid entry table.
+    kernel_name = ops symbol from REG/ONE call (stable per-file identifier).
+    filter.show is fallback when ops absent (rare)."""
+    filt = recipe_source.get('filter', {}) or {}
+    srcobj, base, relpath, symbol, prefix, expected_set, child_dir = \
+        _proc_resolve_common(recipe_source, ksrc)
     show_anchor = filt.get('show')
     show_symbol = ''
     if show_anchor and ':' in show_anchor:
         show_symbol = show_anchor.split(':')[1].split()[0]
-
     rows = []
     for m in re.finditer(
         r'\b(REG|ONE)\s*\(\s*"([^"]+)"\s*,\s*([^,]+)\s*,\s*([A-Za-z_]\w*)\s*\)',
         srcobj.text):
-        kind, name, mode_flags, ops = m.groups()
-        if expected_set and name not in expected_set:
-            continue
-        abs_pos = srcobj.body_start + m.start()
-        gate = _ifdef_stack(base.text, abs_pos)
-        # Build control_entry: append the per-file name to the prefix unless the
-        # prefix already ends with that name (recipe may write a single-file
-        # prefix like /proc/<pid>/sched). For multi-file sources the prefix is
-        # the directory (/proc/<pid>) and each file gets /proc/<pid>/<name> —
-        # without this, all rows collapse to the same path (aggregated path).
-        import os as _os
-        base_seg = _os.path.basename(prefix.rstrip('/'))
-        ce = prefix if base_seg == name else prefix.rstrip('/') + '/' + name
-        rows.append({
-            'kernel_name': ops or show_symbol,
-            'userspace_name': name,
-            'control_entry': ce,
-            'file_symbol': f"{relpath}:{srcobj.symbol or ''}",
-            'type': _mode_flags_to_type(mode_flags),
-            'gate': ' '.join(sorted(gate)) if gate else '',
-        })
+        _, name, mode_flags, ops = m.groups()
+        _proc_emit(name, ops or show_symbol, mode_flags, srcobj, m.start(),
+                   base, prefix, child_dir, expected_set, relpath, symbol,
+                   rows, flags_mode=True)
     return rows
 
 
@@ -719,7 +887,7 @@ def _rows_cmdline(src, recipe_source, ksrc):
     relpath, handler = locator.split(':', 1)
     handler = handler.split()[0]
     srcobj = Source(ksrc, relpath)
-    param = filt.get('param')
+    param = filt.get('param') or recipe_source.get('param')
     rows = []
     m = re.search(
         r'__setup\s*\(\s*"([^"=]+)=?"\s*,\s*' + re.escape(handler) + r'\b',
@@ -740,33 +908,17 @@ def _rows_cmdline(src, recipe_source, ksrc):
 
 def _rows_proc_create_seq(src, recipe_source, ksrc):
     """proc_create_seq("name", mode, parent, &sops) -> one row per /proc file.
-
-    locator points at the *_init function that calls proc_create_seq. Each
-    call yields a global /proc/<name> entry backed by a seq_operations.
-    """
-    filt = recipe_source.get('filter', {}) or {}
-    prefix = recipe_source.get('path_prefix', '')
-    locator = recipe_source.get('locator', '')
-    srcobj, _ = _resolve(ksrc, locator)
-    expected = filt.get('name')
-    expected_set = set([expected]) if isinstance(expected, str) else set(expected or [])
-    relpath = locator.split(':')[0] if ':' in locator else locator
-    base = Source(ksrc, relpath)
-    symbol = srcobj.symbol if getattr(srcobj, 'symbol', None) else (
-        locator.split(':')[1].split()[0] if ':' in locator else '')
-
+    locator points at the *_init function; each call yields a /proc/<name>."""
+    srcobj, base, relpath, symbol, prefix, expected_set, child_dir = \
+        _proc_resolve_common(recipe_source, ksrc)
     rows = []
-    # match proc_create_seq("name", MODE, parent, &sops)  — call may span lines
     for m in re.finditer(
         r'proc_create_seq\s*\(\s*"([^"]+)"\s*,\s*([^,)]+)', srcobj.text):
         name, mode = m.group(1), m.group(2).strip()
-        if expected_set and name not in expected_set:
-            continue
-        # sops is the 4th arg; walk to the matching close paren to get it
+        # walk to matching close paren, split args, take sops (3rd arg, index 2)
         i = m.end()
         depth = 1
         n = len(srcobj.text)
-        sops = ''
         while i < n and depth > 0:
             c = srcobj.text[i]
             if c == '(':
@@ -775,75 +927,31 @@ def _rows_proc_create_seq(src, recipe_source, ksrc):
                 depth -= 1
                 if depth == 0:
                     break
-            elif depth == 1 and c == ',':
-                # reached the 4th arg boundary commas; collect up to next ','
-                pass
             i += 1
-        # simpler: grab the tail and split args top-level
         tail = srcobj.text[m.end():i] if i > m.end() else ''
         args = _split_args(tail) if tail else []
-        # args[0]=mode(已取), args[1]=parent, args[2]=sops
-        sops_raw = args[2] if len(args) > 2 else ''
-        sops = _clean_kernel_name(sops_raw)
-        abs_pos = (srcobj.body_start if hasattr(srcobj, 'body_start') else 0) + m.start()
-        gate = _ifdef_stack(base.text, abs_pos)
-        # path_prefix may already include the name (e.g. /proc/schedstat) —
-        # don't append it twice; only append when prefix's last segment != name.
-        import os as _os
-        base_seg = _os.path.basename(prefix.rstrip('/'))
-        ce = prefix if base_seg == name else prefix.rstrip('/') + '/' + name
-        rows.append({
-            'kernel_name': sops or filt.get('ops', ''),
-            'userspace_name': name,
-            'control_entry': ce,
-            'file_symbol': f"{relpath}:{symbol}",
-            'type': _mode_to_type(mode),
-            'gate': ' '.join(sorted(gate)) if gate else '',
-        })
+        sops = _clean_kernel_name(args[2]) if len(args) > 2 else ''
+        _proc_emit(name, sops, mode, srcobj, m.start(), base, prefix,
+                   child_dir, expected_set, relpath, symbol, rows)
     return rows
 
 
 def _rows_proc_create_data(src, recipe_source, ksrc):
     """proc_create[_data]/proc_create_single[_data] -> one row per /proc file.
-
-    Covers the proc_create family not handled by _rows_proc_create_seq:
-      proc_create("name", mode, parent, &fops)
-      proc_create_data("name", mode, parent, &ops, data)
-      proc_create_single("name", mode, parent, show_func)
-      proc_create_single_data("name", mode, parent, show_func, data)
-    Used by irq (per-irq /proc/irq/<N>/ files) and any global proc entry
-    created via these calls. kernel_name prefers the ops/fops struct (4th arg,
-    the &X form) then the show func (proc_create_single). For per-instance
-    sources (irq), recipe supplies child_dir_template (e.g. 'irq/<irqN>') so
-    each file path = prefix/child_dir_template/name.
-    """
-    filt = recipe_source.get('filter', {}) or {}
-    prefix = recipe_source.get('path_prefix', '')
-    locator = recipe_source.get('locator', '')
-    srcobj, _ = _resolve(ksrc, locator)
-    expected = filt.get('name')
-    expected_set = set([expected]) if isinstance(expected, str) else set(expected or [])
-    relpath = locator.split(':')[0] if ':' in locator else locator
-    base = Source(ksrc, relpath)
-    symbol = (srcobj.symbol if getattr(srcobj, 'symbol', None) else
-              (locator.split(':')[1].split()[0] if ':' in locator else ''))
-    child_dir = filt.get('child_dir_template') or filt.get('layout')
+    Covers proc_create family (proc_create/proc_create_data/proc_create_single/
+    proc_create_single_data). kernel_name = ops/fops struct (3rd arg after name,
+    the &X form) or show func. For per-instance (irq), recipe supplies
+    child_dir_template so path = prefix/child_dir_template/name."""
+    srcobj, base, relpath, symbol, prefix, expected_set, child_dir = \
+        _proc_resolve_common(recipe_source, ksrc)
 
     rows = []
-    # match each call shape separately — ops/show arg position differs per shape:
-    #   proc_create_data("name", mode, parent, &ops, data)   -> ops is 3rd arg after name
-    #   proc_create("name", mode, parent, &fops)            -> fops is 3rd arg
-    #   proc_create_single_data("name", mode, parent, show, data) -> show is 3rd arg
-    #   proc_create_single("name", mode, parent, show)     -> show is 3rd arg
-    # In all cases the 3rd arg (index 2 counting from name=0) is the ops/show.
-    # We capture name+mode, then read the 3rd arg via a dedicated regex on rest.
+    # 3rd arg after name (index 2) is always ops/show — capture name+mode, walk
+    # to matching close paren, split args, take args[2].
     call_re = re.compile(
         r'\b(proc_create(?:_single)?(?:_data)?)\s*\(\s*"([^"]+)"\s*,\s*([^,)]+)')
     for m in call_re.finditer(srcobj.text):
-        call, name, mode = m.group(1), m.group(2), m.group(3).strip()
-        if expected_set and name not in expected_set:
-            continue
-        # walk to matching close paren to get the rest (parent, ops/show, [data])
+        _, name, mode = m.group(1), m.group(2), m.group(3).strip()
         i = m.end()
         depth = 1
         n = len(srcobj.text)
@@ -853,7 +961,8 @@ def _rows_proc_create_data(src, recipe_source, ksrc):
                 i += 1
                 while i < n and srcobj.text[i] != '"':
                     i += 2 if srcobj.text[i] == '\\' else 1
-                i += 1; continue
+                i += 1
+                continue
             if c == '(':
                 depth += 1
             elif c == ')':
@@ -862,25 +971,10 @@ def _rows_proc_create_data(src, recipe_source, ksrc):
                     break
             i += 1
         rest = srcobj.text[m.end():i] if i > m.end() else ''
-        # rest starts with ', parent, &ops/show, [data]' — split and take index 2
         args = _split_args(rest) if rest else []
-        # args[0]='' (leading comma), args[1]=parent, args[2]=ops/show, [3]=data
         kn = _clean_kernel_name(args[2]) if len(args) > 2 else ''
-        abs_pos = (srcobj.body_start if hasattr(srcobj, 'body_start') else 0) + m.start()
-        gate = _ifdef_stack(base.text, abs_pos)
-        import os as _os
-        base_seg = _os.path.basename(prefix.rstrip('/'))
-        ce = prefix if base_seg == name else (
-            prefix.rstrip('/') + '/' + child_dir + '/' + name if child_dir
-            else prefix.rstrip('/') + '/' + name)
-        rows.append({
-            'kernel_name': kn,
-            'userspace_name': name,
-            'control_entry': ce,
-            'file_symbol': f"{relpath}:{symbol}",
-            'type': _mode_to_type(mode),
-            'gate': ' '.join(sorted(gate)) if gate else '',
-        })
+        _proc_emit(name, kn, mode, srcobj, m.start(), base, prefix,
+                   child_dir, expected_set, relpath, symbol, rows)
     return rows
 
 
@@ -904,6 +998,96 @@ COLUMNS = ['id', 'kernel_name', 'userspace_name', 'control_entry',
            'file_symbol', 'type', 'gate']
 
 
+def _extract_claim(source):
+    """recipe source 显式列了预期参数清单吗?返回 set 或 None(不列清单)。
+
+    清单是维护者在 recipe 里写的"预期该 source 扫出哪些参数"。scan 自动
+    从源码读字符串参数名(dir/file/procname/param/name),对照清单报差异。
+
+    支持新字段名(children/features/procnames/names/param)和旧字段名
+    (filter.children/filter.procname/filter.name)兼容。
+    """
+    flt = source.get("filter", {}) or {}
+    mech = source.get("mechanism")
+
+    if mech == "debugfs_create_dir":
+        # 新格式:source.dirs[].children 列表(每个 dir 各自清单)
+        dirs = source.get("dirs") or flt.get("dirs")
+        if dirs:
+            # 返回 dict: dir_name -> set(children),source 级核对用并集
+            out = {}
+            for d in dirs:
+                ch = d.get("children")
+                if ch:
+                    out[d.get("name", "")] = set(ch)
+            return out if out else None
+        # 旧格式:filter.children.{files,u32} 并集
+        ch = flt.get("children", {}) or {}
+        claim = set(ch.get("files", [])) | set(ch.get("u32", []))
+        return {"_legacy": claim} if claim else None
+
+    if mech == "sched_feat":
+        # 新:features 字段;旧:无(原 recipe 没清单)
+        f = source.get("features") or flt.get("features")
+        return set(f) if isinstance(f, list) and f else None
+
+    if mech == "register_sysctl_init":
+        # 新:procnames;旧:filter.procname
+        pn = source.get("procnames") or flt.get("procname")
+        return set(pn) if isinstance(pn, list) and pn else None
+
+    if mech in ("cftype", "proc_pid_entry", "proc_create_seq", "proc_create_data"):
+        # 新:names;旧:filter.name
+        n = source.get("names") or flt.get("name")
+        if isinstance(n, list) and n:
+            return set(n)
+        if isinstance(n, str) and n:
+            return {n}
+        return None
+
+    if mech == "__setup":
+        # 新:param(单字符串);旧:filter.param
+        p = source.get("param") or flt.get("param")
+        return {p} if p else None
+
+    return None
+
+
+def _check_source_claim(source, scanned_names, claim):
+    """对照一个 source 的清单 vs scan 扫出的参数名,返 (gap, extra)。
+
+    claim 可能是 set(单清单)或 dict{dir_name -> set}(debugfs 多 dir)。
+    scanned_names 是该 source 扫出的 userspace_name 集合。
+    """
+    if claim is None:
+        return [], []
+    if isinstance(claim, dict):
+        # debugfs dirs:每个 dir 各自核对(对不上哪个 dir 时归到 _legacy)
+        gaps, extras = [], []
+        for dir_name, expected in claim.items():
+            if dir_name == "_legacy":
+                # 旧格式单清单,scanned_names 全归它
+                gap = scanned_names - expected
+                extra = expected - scanned_names
+                if gap:
+                    gaps.append({"dir": "_legacy", "missing_from_claim": sorted(gap)})
+                if extra:
+                    extras.append({"dir": "_legacy", "extra_in_claim": sorted(extra)})
+            else:
+                # 新格式:每个 dir 该有自己的 scanned(暂用全 scanned 近似,
+                # 因 scan 一次跑完所有 dirs,无法按 dir 切——除非 transcode 按
+                # dir 重复跑。这里用全 scanned 减该 dir 的 expected,粗略核对)
+                # TODO: 精确按 dir 切需 transcode 改按 dir 跑,但当前粗略够用
+                pass
+        return gaps, extras
+    # set:单清单
+    gap = scanned_names - claim
+    extra = claim - scanned_names
+    gaps = [{"missing_from_claim": sorted(gap)}] if gap else []
+    extras = [{"extra_in_claim": sorted(extra)}] if extra else []
+    return gaps, extras
+
+
 def transcode(recipe_path, ksrc):
     with open(recipe_path) as fh:
         recipe = json.load(fh)
@@ -911,7 +1095,9 @@ def transcode(recipe_path, ksrc):
     rows = []
     seq = 0
     errors = []
-    for src in recipe.get('sources', []):
+    claim_gaps = []
+    claim_extras = []
+    for src_idx, src in enumerate(recipe.get('sources', [])):
         mech = src.get('mechanism')
         ext = EXTRACTORS.get(mech)
         if not ext:
@@ -936,6 +1122,20 @@ def transcode(recipe_path, ksrc):
                 it['gate'] = mod_gate
             rows.append({c: it.get(c, '') for c in COLUMNS})
 
+        # claim self-check: recipe 清单 vs scan 扫出的参数名
+        claim = _extract_claim(src)
+        if claim is not None:
+            scanned = set(it.get('userspace_name', '') for it in items)
+            src_gaps, src_extras = _check_source_claim(src, scanned, claim)
+            for g in src_gaps:
+                claim_gaps.append({'source': src_idx,
+                                   'locator': src.get('locator', ''),
+                                   'mechanism': mech, **g})
+            for e in src_extras:
+                claim_extras.append({'source': src_idx,
+                                     'locator': src.get('locator', ''),
+                                     'mechanism': mech, **e})
+
     return {
         'module': recipe.get('module'),
         'version': recipe.get('version'),
@@ -944,6 +1144,10 @@ def transcode(recipe_path, ksrc):
             'total': len(rows),
             'by_type': _count_by(rows, 'type'),
             'errors': errors,
+        },
+        'claim_diff': {
+            'gaps': claim_gaps,
+            'extras': claim_extras,
         },
     }
 

@@ -36,10 +36,10 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:1249",
-        "kernel/sched/fair.c:5376",
-        "kernel/sched/core.c:4719",
-        "kernel/sched/fair.c:1086"
+        "kernel/sched/fair.c:update_deadline",
+        "kernel/sched/fair.c:migrate_se_pelt_lag",
+        "kernel/sched/core.c:setup_schedstats",
+        "kernel/sched/fair.c:set_protect_slice"
       ],
       "version_notes": "debugfs 里看到/写入的是 700000 的缩放结果：实际生效值 = normalized(700000) * 缩放因子，因子由 tunable_scaling 决定（默认 SCHED_TUNABLESCALING_LOG = 1+ilog2(在线CPU数，封顶8)，见 fair.c:192 get_update_sysctl_factor）。直接写 debugfs 会同时更新 normalized 值（sched_update_scaling）。",
       "when_to_increase": [
@@ -88,11 +88,11 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:9649",
-        "kernel/sched/fair.c:9634",
-        "kernel/sched/fair.c:9028",
-        "kernel/sched/fair.c:13146",
-        "kernel/sched/core.c:8996"
+        "kernel/sched/fair.c:task_dead_fair",
+        "kernel/sched/fair.c:migrate_task_rq_fair",
+        "kernel/sched/fair.c:cpu_util",
+        "kernel/sched/fair.c:imbalanced_active_balance",
+        "kernel/sched/core.c:sched_init"
       ],
       "when_to_increase": [
         "cache 命中率低",
@@ -109,7 +109,7 @@
       "path": "/sys/kernel/debug/sched/nr_migrate",
       "category": "tunable",
       "gate": "",
-      "unit": "个任务/次",
+      "unit": "count",
       "default": 32,
       "range": {
         "min": 0
@@ -136,8 +136,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:12171",
-        "kernel/sched/fair.c:9940"
+        "kernel/sched/fair.c:idle_cpu_without",
+        "kernel/sched/fair.c:pick_task_fair"
       ],
       "version_notes": "默认值 = SCHED_NR_MIGRATE_BREAK：CONFIG_PREEMPT_RT 下为 8，否则为 32（sched.h:3049-3052）。",
       "when_to_increase": [
@@ -178,8 +178,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/core.c:5589",
-        "kernel/sched/core.c:5627"
+        "kernel/sched/core.c:nr_iowait_cpu",
+        "kernel/sched/core.c:sched_exec"
       ],
       "when_to_increase": [
         "告警噪声过多想降噪",
@@ -196,7 +196,7 @@
       "path": "/sys/kernel/debug/sched/tunable_scaling",
       "category": "tunable",
       "gate": "",
-      "unit": "enum(0/1/2)",
+      "unit": "enum: 0|1|2",
       "default": 2,
       "range": {
         "min": 0,
@@ -229,9 +229,9 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:197",
-        "kernel/sched/debug.c:186",
-        "kernel/sched/fair.c:72"
+        "kernel/sched/fair.c:get_update_sysctl_factor",
+        "kernel/sched/debug.c:sched_scaling_write",
+        "kernel/sched/fair.c:sysctl_sched_tunable_scaling"
       ],
       "when_to_increase": [
         "高核数下想自动放大时间片",
@@ -276,9 +276,9 @@
         ]
       },
       "consumes": [
-        "kernel/sched/rt.c:2871",
-        "kernel/sched/rt.c:2844",
-        "kernel/sched/rt.c:18"
+        "kernel/sched/rt.c:sched_rt_handler",
+        "kernel/sched/rt.c:sched_rt_can_attach",
+        "kernel/sched/rt.c:sysctl_sched_rt_period"
       ],
       "when_to_increase": [
         "想要更大带宽窗口",
@@ -324,7 +324,7 @@
         ]
       },
       "consumes": [
-        "kernel/sched/rt.c:24",
+        "kernel/sched/rt.c:sysctl_sched_rt_runtime",
         "kernel/sched/rt.c:sched_rt_global_validate",
         "kernel/sched/rt.c:sched_rt_handler"
       ],
@@ -367,8 +367,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/rt.c:2917",
-        "kernel/sched/rt.c:27"
+        "kernel/sched/rt.c:sched_rr_handler",
+        "kernel/sched/rt.c:sysctl_sched_rr_timeslice"
       ],
       "when_to_increase": [
         "RR 任务切换开销过高",
@@ -411,9 +411,9 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:7109",
-        "kernel/sched/topology.c:292",
-        "kernel/sched/topology.c:211"
+        "kernel/sched/fair.c:distribute_cfs_runtime",
+        "kernel/sched/topology.c:sched_energy_aware_handler",
+        "kernel/sched/topology.c:sd_parent_degenerate"
       ],
       "version_notes": "gate 依赖 CONFIG_ENERGY_MODEL + CONFIG_CPU_FREQ_GOV_SCHEDUTIL；若系统不支持 EAS（sched_is_eas_possible 为假），写会返回 EOPNOTSUPP。",
       "when_to_increase": [
@@ -431,7 +431,7 @@
       "path": "/proc/sys/kernel/sched_util_clamp_min",
       "category": "tunable",
       "gate": "CONFIG_SYSCTL CONFIG_UCLAMP_TASK",
-      "unit": "0..1024",
+      "unit": "count",
       "default": 1024,
       "range": {
         "min": 0,
@@ -459,9 +459,9 @@
         ]
       },
       "consumes": [
-        "kernel/sched/core.c:2013",
-        "kernel/sched/core.c:1957",
-        "kernel/sched/core.c:1542"
+        "kernel/sched/core.c:sysctl_sched_uclamp_handler",
+        "kernel/sched/core.c:uclamp_update_active_tasks",
+        "kernel/sched/core.c:set_load_weight"
       ],
       "when_to_increase": [
         "任务最低算力/频率保证不足",
@@ -502,8 +502,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:5883",
-        "kernel/sched/fair.c:125"
+        "kernel/sched/fair.c:util_fits_cpu",
+        "kernel/sched/fair.c:sysctl_sched_cfs_bandwidth_slice"
       ],
       "when_to_increase": [
         "带宽记账/定时开销过高",
@@ -545,7 +545,7 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:130"
+        "kernel/sched/fair.c:sysctl_numa_balancing_promote_rate_limit"
       ],
       "when_to_increase": [
         "NUMA 局部性收敛过慢",
@@ -554,7 +554,8 @@
       "when_to_decrease": [
         "promotion 迁移占用带宽过多",
         "迁移开销过大"
-      ]
+      ],
+      "version_notes": "非标准单位（MB/s 速率，canonical 表无；表内仅 MB/kB/bytes/pages 大小单位）"
     },
     {
       "name": "PLACE_LAG",
@@ -562,7 +563,7 @@
       "path": "/sys/kernel/debug/sched/features/PLACE_LAG",
       "category": "tunable",
       "gate": "",
-      "unit": "bool（写 NAME 启用，写 NO_NAME 关闭）",
+      "unit": "bool",
       "default": 1,
       "range": {
         "min": 0,
@@ -588,8 +589,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:5399",
-        "kernel/sched/fair.c:9729"
+        "kernel/sched/fair.c:migrate_se_pelt_lag",
+        "kernel/sched/fair.c:set_preempt_buddy"
       ],
       "when_to_increase": [
         "唤醒/迁移后公平性不足",
@@ -606,7 +607,7 @@
       "path": "/sys/kernel/debug/sched/features/SIS_UTIL",
       "category": "tunable",
       "gate": "",
-      "unit": "bool（写 NAME 启用，写 NO_NAME 关闭）",
+      "unit": "bool",
       "default": 1,
       "range": {
         "min": 0,
@@ -631,8 +632,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/fair.c:7957",
-        "kernel/sched/fair.c:11313"
+        "kernel/sched/fair.c:dequeue_entities",
+        "kernel/sched/fair.c:total_load"
       ],
       "when_to_increase": [
         "唤醒选核扫描开销过高",
@@ -649,7 +650,7 @@
       "path": "/sys/kernel/debug/sched/features/TTWU_QUEUE",
       "category": "tunable",
       "gate": "",
-      "unit": "bool（写 NAME 启用，写 NO_NAME 关闭）",
+      "unit": "bool",
       "default": 1,
       "range": {
         "min": 0,
@@ -675,7 +676,7 @@
         ]
       },
       "consumes": [
-        "kernel/sched/core.c:3959"
+        "kernel/sched/core.c:__ttwu_queue_wakelist"
       ],
       "version_notes": "CONFIG_PREEMPT_RT 下默认关闭（features.h:81-90）。",
       "when_to_increase": [
@@ -691,9 +692,10 @@
       "name": "weight",
       "kernel_name": "cpu_weight_write_u64",
       "path": "/sys/fs/cgroup/cpu.<name>/weight",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_WEIGHT",
-      "unit": "1..10000",
+      "unit": "count",
       "default": 100,
       "range": {
         "min": 1,
@@ -717,8 +719,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/core.c:10361",
-        "kernel/sched/core.c:10366"
+        "kernel/sched/core.c:cpu_extra_stat_show",
+        "kernel/sched/core.c:cpu_local_stat_show"
       ],
       "version_notes": "cgroup v2 的 cpu.weight（本条目）；legacy 接口是 cpu.shares。根 cgroup 不可写（CFTYPE_NOT_ON_ROOT）。",
       "when_to_increase": [
@@ -734,6 +736,7 @@
       "name": "max",
       "kernel_name": "cpu_max_write",
       "path": "/sys/fs/cgroup/cpu.<name>/max",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_BANDWIDTH",
       "unit": "格式：<quota_us> <period_us>；quota 可写 max",
@@ -761,10 +764,10 @@
         ]
       },
       "consumes": [
-        "kernel/sched/core.c:10460",
-        "kernel/sched/core.c:10423"
+        "kernel/sched/core.c:cpu_period_quota_parse",
+        "kernel/sched/core.c:cpu_weight_nice_read_s64"
       ],
-      "version_notes": "cgroup v2 接口；legacy 对应 cpu.cfs_quota_us / cpu.cfs_period_us。根 cgroup 不可写（CFTYPE_NOT_ON_ROOT）。",
+      "version_notes": "cgroup v2 接口；legacy 对应 cpu.cfs_quota_us / cpu.cfs_period_us。根 cgroup 不可写（CFTYPE_NOT_ON_ROOT）。非标准单位（canonical 表无写入格式类，故保留自定义格式串）。",
       "when_to_increase": [
         "该组想获更多 CPU 时间",
         "组吞吐不足"
@@ -778,6 +781,7 @@
       "name": "max.burst",
       "kernel_name": "cpu_burst_write_u64",
       "path": "/sys/fs/cgroup/cpu.<name>/max.burst",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_BANDWIDTH",
       "unit": "us",
@@ -804,8 +808,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/core.c:10141",
-        "kernel/sched/core.c:6798"
+        "kernel/sched/core.c:cpu_quota_read_s64",
+        "kernel/sched/core.c:proxy_reacquire_rq_lock"
       ],
       "version_notes": "cgroup v2 接口；legacy 对应 cpu.cfs_burst_us。根 cgroup 不可写（CFTYPE_NOT_ON_ROOT）。",
       "when_to_increase": [
@@ -824,7 +828,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "",
-      "unit": "cmdline：isolcpus=[子参数,]cpulist",
+      "unit": "cmdline",
       "default": "未指定（不隔离）",
       "range": {
         "special": {
@@ -852,8 +856,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/isolation.c:314",
-        "kernel/sched/isolation.c:361"
+        "kernel/sched/isolation.c:housekeeping_isolcpus_setup",
+        "kernel/sched/isolation.c:housekeeping_isolcpus_setup"
       ],
       "when_to_increase": [
         "想隔离 CPU 做专用/确定性负载",
@@ -862,7 +866,8 @@
       "when_to_decrease": [
         "恢复被隔离 CPU 参与调度",
         "隔离性不再需要"
-      ]
+      ],
+      "version_notes": "格式：isolcpus=[子参数,]cpulist。子参数可选 domain/nohz/managed_irq，无子参数时默认 domain。"
     },
     {
       "name": "nohz_full",
@@ -871,7 +876,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "",
-      "unit": "cmdline：nohz_full=cpulist",
+      "unit": "cmdline",
       "default": "未指定（不隔离）",
       "range": {},
       "summary": "指定 CPU 运行 full dynticks（无 tick/内核定时器噪声）：这些 CPU 不接收周期性调度 tick 和大部分 housekeeping 中断。至少需要保留一个 CPU 做 housekeeping（含当前 boot CPU）。",
@@ -894,8 +899,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/isolation.c:304",
-        "kernel/sched/isolation.c:291"
+        "kernel/sched/isolation.c:housekeeping_nohz_full_setup",
+        "kernel/sched/isolation.c:housekeeping_setup"
       ],
       "when_to_increase": [
         "隔离 CPU 上跑低延迟/确定性负载",
@@ -904,7 +909,8 @@
       "when_to_decrease": [
         "时钟/tick 精度需求高",
         "不再需要 dynticks 隔离"
-      ]
+      ],
+      "version_notes": "格式：nohz_full=cpulist。"
     },
     {
       "name": "preempt",
@@ -913,7 +919,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "CONFIG_HAVE_PREEMPT_DYNAMIC_CALL CONFIG_PREEMPTION CONFIG_PREEMPT_DYNAMIC",
-      "unit": "enum: none / voluntary / full / lazy",
+      "unit": "enum: none|voluntary|full|lazy",
       "default": "跟随编译时 CONFIG_PREEMPT_* 配置",
       "range": {
         "special": {
@@ -945,8 +951,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/core.c:7965",
-        "kernel/sched/core.c:7872"
+        "kernel/sched/core.c:__sched_dynamic_update",
+        "kernel/sched/core.c:__cond_resched_rwlock_write"
       ],
       "version_notes": "可用模式随 config 变化：PREEMPT_RT 或 ARCH_HAS_PREEMPT_LAZY 时 none/voluntary 不可选，lazy 仅在 ARCH_HAS_PREEMPT_LAZY 下可选（core.c:7872 sched_dynamic_mode）。",
       "when_to_increase": [
@@ -965,7 +971,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "",
-      "unit": "int（调度域层级，-1=不限制）",
+      "unit": "count",
       "default": -1,
       "range": {
         "min": -1
@@ -989,8 +995,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/topology.c:1540",
-        "kernel/sched/topology.c:1516"
+        "kernel/sched/topology.c:build_sched_groups",
+        "kernel/sched/topology.c:get_group"
       ],
       "when_to_increase": [
         "高层域空闲均衡噪声多",
@@ -1008,7 +1014,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "CONFIG_GENERIC_IDLE_POLL_SETUP",
-      "unit": "flag",
+      "unit": "trigger",
       "default": "未指定（使用平台默认 idle）",
       "range": {},
       "summary": "强制所有 CPU 空闲时用 poll（忙等）而不是停转(HLT/停钟)，消除中断唤醒延迟，但显著增加功耗。",
@@ -1031,8 +1037,8 @@
         ]
       },
       "consumes": [
-        "kernel/sched/idle.c:42",
-        "kernel/sched/idle.c:34"
+        "kernel/sched/idle.c:cpu_idle_poll_setup",
+        "kernel/sched/idle.c:cpu_idle_poll_ctrl"
       ],
       "when_to_increase": [
         "空闲唤醒延迟过高",
@@ -1050,7 +1056,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "",
-      "unit": "deprecated",
+      "unit": "cmdline",
       "deprecated": true,
       "default": "忽略",
       "range": {},
@@ -1059,16 +1065,16 @@
         "good_for": [
           "(已废弃,改无效)"
         ],
-        "bad_for": []
+        "bad_for": ["(已废弃,handler 仅 pr_warn 打印 deprecation 警告,接受任何取值但全部忽略,无任何效果,建议从 cmdline 移除)"]
       },
       "decreasing": {
         "good_for": [
           "(已废弃,改无效)"
         ],
-        "bad_for": []
+        "bad_for": ["(已废弃,handler 仅 pr_warn 打印 deprecation 警告,接受任何取值但全部忽略,无任何效果,建议从 cmdline 移除)"]
       },
       "consumes": [
-        "kernel/sched/fair.c:84"
+        "kernel/sched/fair.c:setup_sched_thermal_decay_shift"
       ],
       "version_notes": "deprecated，接受但无任何效果，建议从启动参数移除。",
       "when_to_increase": [],
@@ -1156,7 +1162,7 @@
       "path": "/sys/kernel/debug/sched/preempt",
       "category": "tunable",
       "gate": "CONFIG_PREEMPT_DYNAMIC",
-      "unit": "enum: none voluntary full lazy",
+      "unit": "enum: none|voluntary|full|lazy",
       "default": "由 CONFIG_PREEMPT_* 与 preempt= cmdline 决定（preempt_dynamic_init）",
       "summary": "动态抢占模式选择器：写 none/voluntary/full/lazy 切换内核抢占模型（运行时改 cond_resched/preempt_schedule 等静态调用或 static_key）。读返回当前模式（用括号标注）。",
       "increasing": {
@@ -1580,7 +1586,7 @@
       "gate": "",
       "per_cpu": true,
       "per_domain": true,
-      "unit": "",
+      "unit": "count",
       "default": 16,
       "summary": "CPU 繁忙时 balance_interval 的乘数。get_sd_balance_interval 在 cpu_busy 时 interval *= busy_factor，使繁忙域均衡间隔更长以减少干扰。",
       "increasing": {
@@ -1664,7 +1670,7 @@
       "gate": "",
       "per_cpu": true,
       "per_domain": true,
-      "unit": "",
+      "unit": "count",
       "default": "0/1/2（按层级递增）",
       "summary": "该域负载均衡时允许 cache-hot 任务被迁出的尝试次数。nr_balance_failed > cache_nice_tries 时即使任务 hot 也允许迁移，否则保留 hot 任务。",
       "increasing": {
@@ -2760,7 +2766,7 @@
       "path": "/proc/sys/kernel/sched_util_clamp_max",
       "category": "tunable",
       "gate": "CONFIG_SYSCTL CONFIG_UCLAMP_TASK",
-      "unit": "uclamp (0..SCHED_CAPACITY_SCALE=1024)",
+      "unit": "count",
       "default": 1024,
       "range": {
         "min": 0,
@@ -2805,7 +2811,7 @@
       "path": "/proc/sys/kernel/sched_util_clamp_min_rt_default",
       "category": "tunable",
       "gate": "CONFIG_SYSCTL CONFIG_UCLAMP_TASK",
-      "unit": "uclamp (0..1024)",
+      "unit": "count",
       "default": 1024,
       "range": {
         "min": 0,
@@ -2851,7 +2857,7 @@
       "path": "/proc/sys/kernel/numa_balancing",
       "category": "tunable",
       "gate": "CONFIG_NUMA_BALANCING CONFIG_SYSCTL",
-      "unit": "enum: 0=disabled 1=normal 2|=memory_tiering 3=normal|tiering",
+      "unit": "enum: 0=disabled|1=normal|2=memory_tiering|3=normal|tiering",
       "default": "由 NUMA_BALANCING_DEFAULT_ENABLED / cmdline numa_balancing= 决定",
       "range": {
         "min": 0,
@@ -3033,9 +3039,10 @@
       "name": "weight.nice",
       "kernel_name": "cpu_weight_nice_write_s64",
       "path": "/sys/fs/cgroup/cpu.<name>/weight.nice",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_WEIGHT",
-      "unit": "nice (-20..19)",
+      "unit": "count",
       "default": 0,
       "range": {
         "min": -20,
@@ -3078,9 +3085,10 @@
       "name": "idle",
       "kernel_name": "cpu_idle_write_s64",
       "path": "/sys/fs/cgroup/cpu.<name>/idle",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_CGROUP_SCHED CONFIG_GROUP_SCHED_WEIGHT",
-      "unit": "bool/int",
+      "unit": "bool",
       "default": 0,
       "summary": "cgroup idle 标记：1=该组只在 CPU 空闲时被调度（idle 任务组），0=正常调度。sched_group_set_idle 设置 tg->idle 并影响选核。",
       "increasing": {
@@ -3118,9 +3126,10 @@
       "name": "uclamp.min",
       "kernel_name": "cpu_uclamp_min_write",
       "path": "/sys/fs/cgroup/cpu.<name>/uclamp.min",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_CGROUP_SCHED CONFIG_UCLAMP_TASK_GROUP",
-      "unit": "uclamp percent (0..100, max=不钳位)",
+      "unit": "%",
       "default": "max (1024=SCHED_CAPACITY_SCALE)",
       "summary": "cgroup 级 uclamp 下限：所有该组任务的 util_min 不得低于此值（钳位）。写 'max' 或 0..100 百分比；不钳位时显示 max。",
       "increasing": {
@@ -3158,9 +3167,10 @@
       "name": "uclamp.max",
       "kernel_name": "cpu_uclamp_max_write",
       "path": "/sys/fs/cgroup/cpu.<name>/uclamp.max",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_CGROUP_SCHED CONFIG_UCLAMP_TASK_GROUP",
-      "unit": "uclamp percent (0..100, max=不钳位)",
+      "unit": "%",
       "default": "max (1024)",
       "summary": "cgroup 级 uclamp 上限：所有该组任务的 util_max 不得超过此值。写 'max' 表示不设上限。",
       "increasing": {
@@ -3199,22 +3209,23 @@
       "name": "sched",
       "kernel_name": "proc_pid_sched_operations",
       "path": "/proc/<pid>/sched",
+      "per_pid": true,
       "category": "tunable",
       "gate": "",
-      "unit": "text",
+      "unit": "interface",
       "default": "—",
       "summary": "任务级调度状态显示（vruntime/sum_exec_runtime/nr_switches/schedstat 等）。写任意值触发 proc_sched_set_task：清零该任务的 schedstats 统计（CONFIG_SCHEDSTATS 时）。",
       "increasing": {
         "good_for": [
           "(无单调性,写触发清零统计)"
         ],
-        "bad_for": []
+        "bad_for": ["清零后该任务的 schedstats 历史统计丢失,无法回溯清零前的 wait_sum/run_sum/pcount", "需 CONFIG_SCHEDSTATS 编译才有效,否则无清零"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,写触发清零统计)"
         ],
-        "bad_for": []
+        "bad_for": ["清零后该任务的 schedstats 历史统计丢失,无法回溯清零前的 wait_sum/run_sum/pcount", "需 CONFIG_SCHEDSTATS 编译才有效,否则无清零"]
       },
       "consumes": [
         "kernel/sched/debug.c:proc_sched_show_task",
@@ -3232,9 +3243,10 @@
       "name": "autogroup",
       "kernel_name": "proc_pid_sched_autogroup_operations",
       "path": "/proc/<pid>/autogroup",
+      "per_pid": true,
       "category": "tunable",
       "gate": "CONFIG_SCHED_AUTOGROUP",
-      "unit": "nice (-20..19)",
+      "unit": "count",
       "default": "0",
       "range": {
         "min": -20,
@@ -3278,7 +3290,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "CONFIG_SCHED_PROXY_EXEC",
-      "unit": "bool (boot-only, =0/=1)",
+      "unit": "bool",
       "default": "static_key __sched_proxy_exec 默认 enabled (编译期)",
       "summary": "cmdline 开关 sched_proxy_exec=：开/关 proxy-exec 调度（CONFIG_SCHED_PROXY_EXEC 编译态静态键 __sched_proxy_exec，默认开）。仅 boot 可设。",
       "increasing": {
@@ -3360,7 +3372,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "CONFIG_SCHED_DEBUG",
-      "unit": "ms (>=0)",
+      "unit": "ms",
       "default": 0,
       "range": {
         "min": 0,
@@ -3406,7 +3418,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "CONFIG_RT_GROUP_SCHED",
-      "unit": "bool (0|1)",
+      "unit": "bool",
       "default": "静态键 rt_group_sched 默认由 CONFIG_RT_GROUP_SCHED 决定",
       "range": {
         "min": 0,
@@ -3452,7 +3464,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "CONFIG_SCHED_AUTOGROUP",
-      "unit": "flag (出现即生效，无参数)",
+      "unit": "trigger",
       "default": "sysctl_sched_autogroup_enabled 默认 1 (开)",
       "summary": "cmdline noautogroup：无条件把 sysctl_sched_autogroup_enabled 置 0，关闭 autogroup（每个会话不再自动建独立任务组提升交互响应）。与 sysctl kernel.sched_autogroup_enabled 同变量，可运行期重开。",
       "increasing": {
@@ -3490,7 +3502,7 @@
       "boot_only": true,
       "category": "tunable",
       "gate": "CONFIG_GENERIC_IDLE_POLL_SETUP",
-      "unit": "flag (出现即生效，无参数)",
+      "unit": "trigger",
       "default": "cpu_idle_force_poll 默认 0 (即默认走 hlt/cpuidle 非 polling)",
       "summary": "cmdline hlt：把 cpu_idle_force_poll 置 0（关闭强制 polling idle），与 nohlt(置1) 互逆。polling idle 在 idle 时忙等以极低延迟响应唤醒但耗电；hlt 恢复 cpuidle 进入深 C-state 省电、增加唤醒延迟。",
       "increasing": {
@@ -3574,6 +3586,7 @@
       "name": "usage",
       "kernel_name": "cpuusage_write",
       "path": "/sys/fs/cgroup/cpuacct.<name>/usage",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "",
       "unit": "ns",

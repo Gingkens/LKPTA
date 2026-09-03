@@ -5,7 +5,7 @@
 ## 1. 你的工作流
 
 ```
-recipe (scan_recipes/<module>.json)
+recipe (scan_recipes/<version>/<module>.json)
    │  scan_recipes/scan.py --recipe ... --ksrc ...
    ▼
 参数工单 (扁平表格, 一行一参数, 7 列)
@@ -24,7 +24,7 @@ scan.py 的具体用法、工单每一列的含义，见 [`scan_recipes/README.m
 一条命令，产出长这样（sched 模块，前 5 行）：
 
 ```bash
-$ python3 scan_recipes/scan.py --recipe scan_recipes/sched.json --ksrc /home/lgk/linux
+$ python3 scan_recipes/scan.py --recipe scan_recipes/v7.2-rc7/sched.json --ksrc /home/lgk/linux
 id	kernel_name	userspace_name	control_entry	file_symbol	type	gate
 1	sched_feat_fops	features	/sys/kernel/debug/sched/features	kernel/sched/debug.c:sched_init_debug	tunable	(空)
 2	sched_debug_verbose	verbose	/sys/kernel/debug/sched/verbose	kernel/sched/debug.c:sched_init_debug	tunable	(空)
@@ -135,6 +135,8 @@ EXTRAVERSION = -rc5
 recipe 的 `version` 字段已按此填好，生产者直接用，不要自创格式。
 
 ## 5. knowledge 产出格式
+
+> **字段权威定义源：[`knowledge/schema.json`](./knowledge/schema.json)**。该文件由**系统维护者**维护，机器可读，列出 tunable/readonly/summary 每个字段的 `required`/`type`/`desc`，以及 `consumes` 的格式规范（`consumes_format`）。本节 §5 的字段表是给人读的导引，与 schema.json 冲突时**以 schema.json 为准**。生产者填写前应读 schema.json 确认字段必填性、类型与填法（`unit` 填什么词见 `fields.tunable.unit.desc`）。
 
 每个模块、每个版本，目录布局如下（五份都是**必产**，README+playbook 见 §7，生产完成度要求见 §7.3）：
 
@@ -270,36 +272,15 @@ readonly 项用 `use`（怎么用来诊断）替代 tunable 的 `increasing`/`de
 
 - `category` = `tunable`/`readonly`，和文件分流一致；summary.json 里也带这个字段。
 - `gate` 格式：空串=无条件存在；有值=空格分隔的 `CONFIG_*`，全部满足才编译（AND）。这是消费者判断"该参数在目标系统存不存在"的判据，必须准确。
-- **非数值参数**：`unit`/`default`/`range`/`increasing`/`decreasing` 是给数值型 tunable 设计的；对非数值参数（布尔开关、cmdline 开关、枚举字符串、格式字符串如 `max "100000"`），按下列约定填，不要硬套数字：
-  - **布尔开关**（如 sched_feat、`sched_energy_aware`）：`unit: "bool"`，`default` 写 true/false 或 "未指定"，`range` 省略或 `{}`；`increasing`=启用（true），`decreasing`=禁用（false），`good_for`/`bad_for` 按启用/禁用效果写。
-  - **cmdline 开关**（如 `isolcpus`、`preempt`）：`unit: "cmdline"`，`default` 写 "未指定"（默认在源码/boot config 决定），`range` 省略；`increasing`/`decreasing` 按"开启该隔离/该模式" vs "不开启"的效果写。
-  - **枚举字符串**（如 `preempt` 的 none/voluntary/full/lazy）：`unit: "enum: <候选值>"`，`default` 写当前版本默认值或 "未指定"，`range` 省略。
-  - **格式字符串**（如 cgroup `max "100000"` 双 token）：`unit`/`default` 如实填字符串，`range` 省略。
-  - **触发式写入**（写一个值触发动作，非单调数值调参，如 cgroup `memory.peak` 写任意值重置峰值、`memory.reclaim` 写字节数触发回收）：`unit: "trigger"`，`default` 写 "无"（无稳态值），`range` 省略；`increasing`/`decreasing` 填 `{"good_for": ["(无单调性,触发)"], "bad_for": []}`，并在 `summary`/`version_notes` 说清"写什么触发什么"。
-  - **接口类**（路径像文件但本质是注入/调试接口，非调参旋钮，如 `/proc/<pid>/mem` 是 ptrace 读写接口）：`unit: "interface"`，`default` 写 "无"，`range` 省略；`increasing`/`decreasing` 同 trigger 填无单调性说明，`version_notes` 注明"非调参,是接口"。
-  - **不接受参数或已废弃**（如 `sched_thermal_decay_shift` 只打警告、`laptop_mode` 已 deprecation-only）：`unit: "deprecated"`，`summary` 注明"已废弃/不生效"，`increasing`/`decreasing` 填 `{"good_for": ["(已废弃,改无效)"], "bad_for": []}`，`version_notes` 说明废弃后行为靠哪个子系统，仍收录以便消费者知道它没用。
+- **非数值参数**：`unit`/`default`/`range`/`increasing`/`decreasing` 是给数值型 tunable 设计的；对非数值参数（布尔开关、cmdline 开关、枚举字符串、格式字符串、触发式写入、接口、已废弃），按下列约定填，不要硬套数字。**`unit` 字段填什么词、各类参数怎么填，见 [`knowledge/schema.json`](./knowledge/schema.json) 的 `fields.tunable.unit.desc`（权威源，生产者照此填）**；其余字段（`default`/`range`/`increasing`/`decreasing`）按该类参数的语义如下配合：
+  - **布尔开关**（如 sched_feat、`sched_energy_aware`）：`default` 写 true/false 或 "未指定"，`range` 省略或 `{}`；`increasing`=启用（true），`decreasing`=禁用（false），`good_for`/`bad_for` 按启用/禁用效果写。
+  - **cmdline 开关**（如 `isolcpus`、`preempt`）：`default` 写 "未指定"（默认在源码/boot config 决定），`range` 省略；`increasing`/`decreasing` 按"开启该隔离/该模式" vs "不开启"的效果写。
+  - **枚举字符串**（如 `preempt` 的 none/voluntary/full/lazy）：`default` 写当前版本默认值或 "未指定"，`range` 省略。
+  - **格式字符串**（如 cgroup `max "100000"` 双 token）：`default` 如实填字符串，`range` 省略。
+  - **触发式写入**（写一个值触发动作，非单调数值调参，如 cgroup `memory.peak` 写任意值重置峰值、`memory.reclaim` 写字节数触发回收）：`default` 写 "无"（无稳态值），`range` 省略；`increasing`/`decreasing` 填 `{"good_for": ["(无单调性,触发)"], "bad_for": []}`，并在 `summary`/`version_notes` 说清"写什么触发什么"。
+  - **接口类**（路径像文件但本质是注入/调试接口，非调参旋钮，如 `/proc/<pid>/mem` 是 ptrace 读写接口）：`default` 写 "无"，`range` 省略；`increasing`/`decreasing` 同 trigger 填无单调性说明，`version_notes` 注明"非调参,是接口"。
+  - **不接受参数或已废弃**（如 `sched_thermal_decay_shift` 只打警告、`laptop_mode` 已 deprecation-only）：`summary` 注明"已废弃/不生效"，`increasing`/`decreasing` 填 `{"good_for": ["(已废弃,改无效)"], "bad_for": []}`，`version_notes` 说明废弃后行为靠哪个子系统，仍收录以便消费者知道它没用。
   - `unit` 填不下的信息放 `summary` 或 `version_notes`，别硬塞进数字字段。
-
-  **`unit` canonical 词汇表**（生产者从这里选，不要自创同义词）：
-
-  | `unit` 值 | 用于 | 示例 |
-  |---|---|---|
-  | `ns`/`us`/`ms`/`s` | 时间 | `base_slice_ns` |
-  | `kB`/`MB`/`bytes`/`pages` | 内存大小 | `min_free_kbytes`、`memory.max` |
-  | `%` | 百分比/比例 | `dirty_ratio` |
-  | `ratio` | 0~1 或 0~N 的比值（注明分母） | `watermark_scale_factor`(1/10000) 用 `1/10000` 注明分母 |
-  | `count` | 整数计数 | `nr_hugepages` |
-  | `bits`/`bitmap` | 位图 | `defrag_mode` 各 bit |
-  | `jiffies`/`centisec` | 内核时间单位（注明换算） | `dirty_writeback_centisecs` |
-  | `bool` | 布尔开关 | `sched_energy_aware` |
-  | `cmdline` | boot cmdline 参数 | `transparent_hugepage` |
-  | `enum: <候选>` | 枚举字符串 | `enum: always\|madvise\|never` |
-  | `trigger` | 触发式写入 | `memory.reclaim` |
-  | `interface` | 非调参接口 | `/proc/<pid>/mem` |
-  | `deprecated` | 已废弃 | `laptop_mode` |
-  | `gid`/`uid` | 用户/组 ID | `hugetlb_shm_group` |
-
-  遇到表外的单位，**优先用上表已有的**（如 `1/10000` 归 `ratio` 并在 `summary` 注明分母），实在没有再用自定义字符串并在该参数 `version_notes` 标注"非标准单位"，保持同模块内一致。
 
   **`range` 省略约定**：源码里读不到边界约束（sysctl 无 `.extra1`/`.extra2` 且 write 回调无显式校验）时，`range` 写 `{}`（空对象）而非省略字段，让消费者明确"源码未约束"而非"生产者漏填"。`increasing`/`decreasing` 仍要填——它们看的是调参效果不是边界。
 - **以源码为准**：本文档和任何示例仅供参考，**与内核源码冲突时以源码为准**。读到示例与源码不一致，按源码语义填写，并在该参数的 `version_notes` 里标注"文档示例有误，实际语义见源码"。示例是为说明 schema 形态，不保证参数语义永远正确——具体参数含义必须亲自读源码核实，不要照抄示例或旧 knowledge。
@@ -335,6 +316,7 @@ readonly 项用 `use`（怎么用来诊断）替代 tunable 的 `increasing`/`de
 - [ ] 同名不同路径的参数按全路径区分，没合并。
 - [ ] 已废弃参数（`unit: "deprecated"` 或源码确认 handler 仅 pr_warn）标了 `deprecated: true`，消费者可过滤。
 - [ ] boot-only cmdline 参数（运行时不可改）标了 `boot_only: true`，消费者给建议时改提示重启而非 `echo`。
+- [ ] **字段对照 schema.json**：每条 tunable/readonly/summary 的字段符合 `knowledge/schema.json` 的 `required`/`type` 约束——必填字段无缺失，`category` 取值在 `tunable|readonly`，`unit` 按 `fields.tunable.unit.desc` 的填法说明填、表外自定义单位已在 `version_notes` 标注非标准单位，`consumes` 每条符合 `consumes_format`（`文件:符号`，禁行号/裸文件/`struct->field`/带注后缀）。verify.py 已据此自动校验，但生产者自检时先对照一遍。
 
 **选型层 + 流程层（必产，生产完成度的要求，见 §7.3；verify.py 不校验但 §6 自检保证）**：
 
@@ -352,7 +334,7 @@ readonly 项用 `use`（怎么用来诊断）替代 tunable 的 `increasing`/`de
 
 ```bash
 # 同版本完整性校验（你产完后跑）
-python3 verify.py --recipe scan_recipes/<module>.json --ksrc <内核源码> \
+python3 verify.py --recipe scan_recipes/<version>/<module>.json --ksrc <内核源码> \
     --against knowledge/<version>/<module>/
 
 # missing=0 才算完整。missing 列出的就是你漏掉的，逐个补上。
@@ -392,6 +374,8 @@ python3 verify.py --recipe scan_recipes/<module>.json --ksrc <内核源码> \
 
 ## 配套
 - query.py 用法（--list / --name / --playbook）、vocab 入口。
+- **`knowledge/schema.json`**（字段权威定义）：tunable/readonly/summary 每个字段的必填性/类型/填法说明、consumes 格式规范。填写 knowledge 前先读它确认字段约定（`unit` 怎么填见 `fields.tunable.unit.desc`），与源码冲突时以源码为准并在 `version_notes` 标注。
+- `knowledge/vocab.json`（领域术语）：summary/use 里用到消费者可能不懂的内核术语（EEVDF/PELT/cache-cold…）在此追加，见 §5 末尾。
 ```
 
 **关键约束**：开头 `> 一句话摘要` 行是 `query.py --modules` 提取的，必须第一行 `>` 引用且紧跟在 H1 标题后（空行后第一个非空块）。简介要够"一句话"——消费者 `--modules` 横向比较多个模块时靠它，太长就没法比。

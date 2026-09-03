@@ -288,13 +288,13 @@
         "good_for": [
           "(无单调性,枚举)"
         ],
-        "bad_for": []
+        "bad_for": ["Zone 模式:跨 node 分配 NUMA 局部性变差", "切换后已分配内存不迁移,只影响后续新分配"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,枚举)"
         ],
-        "bad_for": []
+        "bad_for": ["Node 模式:同 zone type 内分配可能不均衡", "切换后已分配内存不迁移,只影响后续新分配"]
       },
       "consumes": [
         "mm/page_alloc.c:numa_zonelist_order_handler",
@@ -504,13 +504,13 @@
         "good_for": [
           "(无单调性,触发动作)"
         ],
-        "bad_for": []
+        "bad_for": ["紧缩期间业务延迟尖峰(CPU 被同步紧缩占用)", "大页可能被拆成基页致 TLB miss 短期上升", "lru_add_drain_all 前置刷新 LRU 增加瞬时开销"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,触发动作)"
         ],
-        "bad_for": []
+        "bad_for": ["紧缩期间业务延迟尖峰(CPU 被同步紧缩占用)", "大页可能被拆成基页致 TLB miss 短期上升", "lru_add_drain_all 前置刷新 LRU 增加瞬时开销"]
       },
       "consumes": [
         "mm/compaction.c:sysctl_compaction_handler"
@@ -698,13 +698,13 @@
         "good_for": [
           "(无单调性,触发动作)"
         ],
-        "bad_for": []
+        "bad_for": ["刷新期间 schedule_on_each_cpu 各 CPU 短暂停", "zone 计数为负会返回错误并 pr_warn 触发 BUG 报告"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,触发动作)"
         ],
-        "bad_for": []
+        "bad_for": ["刷新期间 schedule_on_each_cpu 各 CPU 短暂停", "zone 计数为负会返回错误并 pr_warn 触发 BUG 报告"]
       },
       "consumes": [
         "mm/vmstat.c:vmstat_refresh"
@@ -1388,13 +1388,13 @@
         "good_for": [
           "(无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["改 gid 后原组失去 SHM_HUGETLB 权限", "已用大页的进程不受影响,只对新分配生效"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["改 gid 后原组失去 SHM_HUGETLB 权限", "已用大页的进程不受影响,只对新分配生效"]
       },
       "consumes": [
         "fs/hugetlbfs/inode.c:hugetlb_file_setup"
@@ -1886,13 +1886,13 @@
         "good_for": [
           "(已废弃,改无效)"
         ],
-        "bad_for": []
+        "bad_for": ["(已废弃,handler laptop_mode_handler 仅 pr_warn 后忽略设置,无任何效果)"]
       },
       "decreasing": {
         "good_for": [
           "(已废弃,改无效)"
         ],
-        "bad_for": []
+        "bad_for": ["(已废弃,handler laptop_mode_handler 仅 pr_warn 后忽略设置,无任何效果)"]
       },
       "version_notes": "未确认: laptop_mode_handler 仅打 pr_warn,实际 laptop 模式行为需要其他子系统(如 block)参与;v7.1.0-rc5 中此 sysctl 已无功能",
       "when_to_increase": [],
@@ -2069,6 +2069,7 @@
       "name": "peak",
       "kernel_name": "memory_peak_write",
       "path": "/sys/fs/cgroup/memory.<name>/peak",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_MEMCG",
       "unit": "trigger",
@@ -2079,13 +2080,13 @@
         "good_for": [
           "(无单调性,触发)"
         ],
-        "bad_for": []
+        "bad_for": ["重置后历史峰值丢失,无法回溯重置前的内存使用峰值"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,触发)"
         ],
-        "bad_for": []
+        "bad_for": ["重置后历史峰值丢失,无法回溯重置前的内存使用峰值"]
       },
       "consumes": [
         "mm/memcontrol.c:peak_write"
@@ -2102,6 +2103,7 @@
       "name": "min",
       "kernel_name": "memory_min_write",
       "path": "/sys/fs/cgroup/memory.<name>/min",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_MEMCG",
       "unit": "bytes",
@@ -2144,6 +2146,7 @@
       "name": "low",
       "kernel_name": "memory_low_write",
       "path": "/sys/fs/cgroup/memory.<name>/low",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_MEMCG",
       "unit": "bytes",
@@ -2185,6 +2188,7 @@
       "name": "high",
       "kernel_name": "memory_high_write",
       "path": "/sys/fs/cgroup/memory.<name>/high",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_MEMCG",
       "unit": "bytes",
@@ -2231,6 +2235,7 @@
       "name": "max",
       "kernel_name": "memory_max_write",
       "path": "/sys/fs/cgroup/memory.<name>/max",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_MEMCG",
       "unit": "bytes",
@@ -2276,6 +2281,7 @@
       "name": "oom.group",
       "kernel_name": "memory_oom_group_write",
       "path": "/sys/fs/cgroup/memory.<name>/oom.group",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_MEMCG",
       "unit": "bool",
@@ -2317,6 +2323,7 @@
       "name": "reclaim",
       "kernel_name": "memory_reclaim",
       "path": "/sys/fs/cgroup/memory.<name>/reclaim",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_MEMCG",
       "unit": "trigger",
@@ -2327,13 +2334,13 @@
         "good_for": [
           "(无单调性,触发动作)"
         ],
-        "bad_for": []
+        "bad_for": ["回收期间被回收进程的内存访问延迟上升", "回收量超可用返回 -ENOMEM 失败", "可被信号中断返回 -ERESTARTSYS"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,触发动作)"
         ],
-        "bad_for": []
+        "bad_for": ["回收期间被回收进程的内存访问延迟上升", "回收量超可用返回 -ENOMEM 失败", "可被信号中断返回 -ERESTARTSYS"]
       },
       "consumes": [
         "mm/memcontrol.c:user_proactive_reclaim"
@@ -2348,6 +2355,7 @@
       "name": "swap.high",
       "kernel_name": "swap_high_write",
       "path": "/sys/fs/cgroup/memory.<name>/swap.high",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_SWAP",
       "unit": "bytes",
@@ -2391,6 +2399,7 @@
       "name": "swap.max",
       "kernel_name": "swap_max_write",
       "path": "/sys/fs/cgroup/memory.<name>/swap.max",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_SWAP",
       "unit": "bytes",
@@ -2433,6 +2442,7 @@
       "name": "swap.peak",
       "kernel_name": "swap_peak_write",
       "path": "/sys/fs/cgroup/memory.<name>/swap.peak",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_SWAP",
       "unit": "trigger",
@@ -2443,13 +2453,13 @@
         "good_for": [
           "(无单调性,触发)"
         ],
-        "bad_for": []
+        "bad_for": ["重置后历史 swap 峰值丢失,无法回溯重置前的 swap 使用峰值"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,触发)"
         ],
-        "bad_for": []
+        "bad_for": ["重置后历史 swap 峰值丢失,无法回溯重置前的 swap 使用峰值"]
       },
       "consumes": [
         "mm/memcontrol.c:peak_write"
@@ -2465,6 +2475,7 @@
       "name": "zswap.max",
       "kernel_name": "zswap_max_write",
       "path": "/sys/fs/cgroup/memory.<name>/zswap.max",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_SWAP CONFIG_ZSWAP",
       "unit": "bytes",
@@ -2507,6 +2518,7 @@
       "name": "zswap.writeback",
       "kernel_name": "zswap_writeback_write",
       "path": "/sys/fs/cgroup/memory.<name>/zswap.writeback",
+      "per_cgroup": true,
       "category": "tunable",
       "gate": "CONFIG_SWAP CONFIG_ZSWAP",
       "unit": "bool",
@@ -2547,6 +2559,7 @@
       "name": "mem",
       "kernel_name": "proc_mem_operations",
       "path": "/proc/<pid>/mem",
+      "per_pid": true,
       "category": "tunable",
       "gate": "",
       "unit": "interface",
@@ -2557,13 +2570,13 @@
         "good_for": [
           "(无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["写入会修改目标进程地址空间,误用致进程状态破坏或崩溃", "需 CAP_SYS_PTRACE 权限,误用有安全风险"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["写入会修改目标进程地址空间,误用致进程状态破坏或崩溃", "需 CAP_SYS_PTRACE 权限,误用有安全风险"]
       },
       "version_notes": "工单 type=tunable 来自 tgid_base_stuff REG 的 S_IWUSR 权限位;实际是诊断/注入接口而非调参",
       "when_to_increase": [
@@ -2577,6 +2590,7 @@
       "name": "clear_refs",
       "kernel_name": "proc_clear_refs_operations",
       "path": "/proc/<pid>/clear_refs",
+      "per_pid": true,
       "category": "tunable",
       "gate": "CONFIG_PROC_PAGE_MONITOR",
       "unit": "enum: 1-5",
@@ -2595,13 +2609,13 @@
         "good_for": [
           "(无单调性,枚举)"
         ],
-        "bad_for": []
+        "bad_for": ["清除后 workingset 采样需重新累积,采样窗口被中断", "清 SoftDirty 后无法区分清除前后新脏页"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,枚举)"
         ],
-        "bad_for": []
+        "bad_for": ["清除后 workingset 采样需重新累积,采样窗口被中断", "清 SoftDirty 后无法区分清除前后新脏页"]
       },
       "consumes": [
         "fs/proc/task_mmu.c:clear_refs_write"
@@ -2666,13 +2680,13 @@
         "good_for": [
           "(策略位图,无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["never 模式:该 order 的 anon THP 失效,TLB miss 上升", "always 模式:碎片化内存 THP 分配失败增多,可能回退基页"]
       },
       "decreasing": {
         "good_for": [
           "(策略位图,无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["never 模式:该 order 的 anon THP 失效,TLB miss 上升", "always 模式:碎片化内存 THP 分配失败增多,可能回退基页"]
       },
       "consumes": [
         "mm/huge_memory.c:setup_thp_anon"
@@ -2740,13 +2754,13 @@
         "good_for": [
           "(枚举,无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["online_movable:热插内存只能迁移动到 movable 区,内核数据结构不能放", "offline:热插内存默认不在线,需手动 online 才可用"]
       },
       "decreasing": {
         "good_for": [
           "(枚举,无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["online_movable:热插内存只能迁移动到 movable 区,内核数据结构不能放", "offline:热插内存默认不在线,需手动 online 才可用"]
       },
       "consumes": [
         "mm/memory_hotplug.c:setup_memhp_default_state",
@@ -2817,13 +2831,13 @@
         "good_for": [
           "(无单调性,布局参数)"
         ],
-        "bad_for": []
+        "bad_for": ["预留过大挤压正常分配可用内存", "预留名重复会冲突,同名预留区被覆盖", "KHO 重启需配合保留同名才可复用"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,布局参数)"
         ],
-        "bad_for": []
+        "bad_for": ["预留过大挤压正常分配可用内存", "预留名重复会冲突,同名预留区被覆盖", "KHO 重启需配合保留同名才可复用"]
       },
       "consumes": [
         "mm/memblock.c:reserve_mem",
@@ -2853,13 +2867,13 @@
         "good_for": [
           "(已废弃,改无效)"
         ],
-        "bad_for": []
+        "bad_for": ["(已废弃,handler 仅 pr_warn_once 警告,无实际行为,swap cgroup 控制改由 cgroupfs swap.* 文件实现)"]
       },
       "decreasing": {
         "good_for": [
           "(已废弃,改无效)"
         ],
-        "bad_for": []
+        "bad_for": ["(已废弃,handler 仅 pr_warn_once 警告,无实际行为,swap cgroup 控制改由 cgroupfs swap.* 文件实现)"]
       },
       "version_notes": "未确认: 仅 pr_warn_once 警告,无实际行为;swap cgroup 控制由 cgroupfs swap.* 文件实现",
       "when_to_increase": [],
@@ -2880,13 +2894,13 @@
         "good_for": [
           "(无单调性,组合开关)"
         ],
-        "bad_for": []
+        "bad_for": ["禁用某子控制器后该层不再记账,资源争用诊断失去 cgroup 维度", "禁用 kmem 记账后内核内存泄漏难定位到 cgroup"]
       },
       "decreasing": {
         "good_for": [
           "(无单调性,组合开关)"
         ],
-        "bad_for": []
+        "bad_for": ["禁用某子控制器后该层不再记账,资源争用诊断失去 cgroup 维度", "禁用 kmem 记账后内核内存泄漏难定位到 cgroup"]
       },
       "consumes": [
         "mm/memcontrol.c:cgroup_memory"
@@ -3003,7 +3017,7 @@
         "good_for": [
           "(无参数)"
         ],
-        "bad_for": []
+        "bad_for": ["调试需固定地址场景无法满足(默认保持 ASLR)", "依赖地址固定的旧二进制无法兼容"]
       },
       "consumes": [
         "mm/memory.c:disable_randmaps"
@@ -3038,7 +3052,7 @@
         "good_for": [
           "(无参数)"
         ],
-        "bad_for": []
+        "bad_for": ["合并后同 size 不同用途 cache 共享,排查特定 cache 内存泄漏变难", "slab 合并致元数据共享,per-cache 统计粒度丢失"]
       },
       "consumes": [
         "mm/slab_common.c:setup_slab_nomerge"
@@ -3073,7 +3087,7 @@
         "good_for": [
           "(无参数)"
         ],
-        "bad_for": []
+        "bad_for": ["slab cache 数量增多,元数据开销上升", "内存碎片化可能加剧(同 size cache 不合并)"]
       },
       "consumes": [
         "mm/slab_common.c:setup_slab_merge"
@@ -3138,13 +3152,13 @@
         "good_for": [
           "(策略位图,无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["never 模式:shmem THP 失效,shmem 大页分配回退基页,TLB miss 上升", "always 模式:碎片化内存 shmem 大页分配失败致 fallback"]
       },
       "decreasing": {
         "good_for": [
           "(策略位图,无单调性)"
         ],
-        "bad_for": []
+        "bad_for": ["never 模式:shmem THP 失效,shmem 大页分配回退基页,TLB miss 上升", "always 模式:碎片化内存 shmem 大页分配失败致 fallback"]
       },
       "consumes": [
         "mm/shmem.c:setup_thp_shmem"

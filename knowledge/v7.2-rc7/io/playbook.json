@@ -185,6 +185,433 @@
       "elevator_setup 已废弃：boot cmdline elevator= 在 v7.2 仅 pr_warn 不再生效。改 IO 调度器必须用 /sys/block/<dev>/queue/scheduler（sysfs，非本工单覆盖范围）。"
     ]
   },
+  "userspace_tools": {
+    "_doc": "io 域用户空间工具清单。读 man page 产出,非训练数据印象。每条 tool=命令名, function=干什么, key_options=关键参数(真读 man 后记下语义/默认值/约束), when_to_use=何时用(映射到 io capability 的 when_applies 或 rule 的 symptom), kernel_alternative=该工具能替代/互补哪个 tunable(kernel_name 引用,boot-only 的标 no runtime), caveats=坑(权限/边界行为/版本差异)。工具不列优先级——消费者按场景选。v1/v2 兼容:io cgroup 在 v2 是 io controller(io.max/io.weight/io.latency),v1 是 blkio controller;libcgroup(lscgroup/cgcreate/cgset/cgexec)偏 v1,lscgroup man 原文 v1 only,cgcreate/cgset/cgexec 通过 -c scope/-b 部分适配 v2;systemd-run --property=IOWeight=/IODeviceWeight=/IODeviceLatency= 是 v2 推荐入口。共 10 个工具(iostat/ionice/blockdev/lsblk/dd/systemd-run/cgcreate/cgset/cgexec/lscgroup)。未装未读:xfs_io(xfsprogs 未装)、hdparm(未装)、nvme(nvme-cli 未装)、multipath(multipath-tools 未装)、fio(未装)——这些不凭印象写,需现场装后查 man 再补。",
+    "tools": [
+      {
+        "tool": "iostat",
+        "function": "报告 CPU 利用率与每个块设备/分区的 IO 统计(sysstat 包)。读 /proc/diskstats 与 /sys 算出 tps/吞吐/await/%util 等。默认输出自系统启动以来的累计值,设 interval 后续报告为上次以来的增量。",
+        "key_options": [
+          {
+            "opt": "-x",
+            "semantics": "扩展统计。显示 await/r_await/w_await/rareq-sz/wareq-sz/aqu-sz/%util 等(man 原文:展示的扩展字段依 -x/-s/-k|-m 而定)。"
+          },
+          {
+            "opt": "-d",
+            "semantics": "只显示设备利用报告(不显示 CPU 报告)。"
+          },
+          {
+            "opt": "-c",
+            "semantics": "只显示 CPU 利用报告。"
+          },
+          {
+            "opt": "-p [device|ALL]",
+            "semantics": "显示块设备及其所有分区的统计。ALL=所有定义的块设备与分区(含未使用的)。"
+          },
+          {
+            "opt": "-k / -m",
+            "semantics": "显示单位改为 KB/s 或 MB/s(默认块=扇区 512B,设 POSIXLY_CORRECT 环境变量才是 512B 块)。"
+          },
+          {
+            "opt": "interval [count]",
+            "semantics": "interval=报告间隔秒数;count=生成报告数。无 count 时持续生成。第一份报告是开机以来累计(除非 -y 略过)。"
+          },
+          {
+            "opt": "-y",
+            "semantics": "略过开机以来累计的第一份报告(只用增量)。"
+          },
+          {
+            "opt": "-z",
+            "semantics": "略过采样期内无活动的设备。"
+          },
+          {
+            "opt": "-N",
+            "semantics": "显示 device-mapper 注册名(LVM2 统计)。"
+          },
+          {
+            "opt": "-t",
+            "semantics": "每份报告打印时间戳(格式依 S_TIME_FORMAT)。"
+          },
+          {
+            "opt": "--human / --pretty / -h",
+            "semantics": "--human=人类可读大小(1.0k/1.2M);--pretty=设备名右对齐+必要时拆子报告;-h=等价 --human --pretty。"
+          },
+          {
+            "opt": "-o JSON",
+            "semantics": "JSON 输出(字段顺序不保证,未来可能加字段)。"
+          },
+          {
+            "opt": "-g group_name {device...|ALL} [-H]",
+            "semantics": "把多个设备聚合为一个组,先报每组设备再报组汇总。-H 只显示组汇总不显示单设备。"
+          },
+          {
+            "opt": "-j {ID|LABEL|PATH|UUID|...}",
+            "semantics": "用 /dev/disk 下的持久名(ID/LABEL/PATH/UUID)显示设备。隐含 --pretty。"
+          }
+        ],
+        "when_to_use": "io-stats-observation(rule R2-unknown-io-bottleneck):iostat -x <dev> 2 N 看热点设备的 await(平均 IO 延迟 ms)/%util(饱和度)/aqu-sz(队列)/rareq-sz·wareq-sz(平均请求大小)做归因;rule R1-cgroup-io-share-unfair:iostat -x 看 %util 与 await 判断设备是否饱和(>80% 饱和,纯调 weight 是切蛋糕)。是 iocost/ioprio 调参前先看 IO 在哪盘、什么类型的入口。",
+        "kernel_alternative": "(无,纯观察工具;对应 readonly 是 diskstats_op,内核 /proc/diskstats 的用户态聚合视图——iostat 读 /proc/diskstats 与 /sys 算出,不是 tunable)",
+        "caveats": "需 sysstat 包,本机已装。/proc 必须挂载。man 原文:称 kilobytes(kB)/megabytes(MB) 实际是 kibibytes(kiB)/mebibytes(MiB,1024 进制)。%util 对串行设备接近 100% 表示饱和,但对并行设备(RAID/SSD)不反映性能上限(man 原文)。第一份报告(无 -y)是开机以来累计,非当前态——采样要用 interval。命令后需 K=1024 而非 KB=1000。"
+      },
+      {
+        "tool": "ionice",
+        "function": "设置或获取进程的 IO 调度类与优先级(util-linux)。三种类:Idle(仅设备空闲时得时间)、Best-effort(默认,0-7 优先级低数高优先,同优先级轮转)、Realtime(优先得盘,可饿死其他,非 root 不可用)。",
+        "key_options": [
+          {
+            "opt": "-c, --class class",
+            "semantics": "调度类:0=none,1=realtime,2=best-effort,3=idle。可传名称或数字。"
+          },
+          {
+            "opt": "-n, --classdata level",
+            "semantics": "类数据(优先级)。realtime/best-effort 有效 0-7,0 是最高优先级。idle 类不接受参数。"
+          },
+          {
+            "opt": "-p, --pid PID...",
+            "semantics": "对已存在 PID 操作(可多个)。无命令时查询当前 IO 调度类与优先级。"
+          },
+          {
+            "opt": "-P, --pgid PGID...",
+            "semantics": "对进程组 ID 操作。"
+          },
+          {
+            "opt": "-u, --uid UID...",
+            "semantics": "对用户 ID 的所有进程操作。"
+          },
+          {
+            "opt": "-t, --ignore",
+            "semantics": "忽略设置优先级失败的错误(权限不足或老内核),命令仍执行。"
+          },
+          {
+            "opt": "(无 class,有 command)",
+            "semantics": "默认 best-effort 类,默认优先级 4。"
+          }
+        ],
+        "when_to_use": "cgroup-io-quota(rule R1-cgroup-io-share-unfair):对单进程(非 cgroup)直接用 ionice -c 1 -n 0 <cmd> 把关键进程提到 RT 抢盘,或 -c 3 <cmd> 把后台批任务降到 idle 让路——这是 per-process 的 IO 优先级,与 iocost 的 per-cgroup 权重互补。rule R1 的 recommend 列 ioprio_set_prio_policy 是 cgroup 级,本工具是进程级入口。",
+        "kernel_alternative": "ioprio_set_prio_policy(互补:ionice 是 per-process ioprio_set(2) 系统调用入口,ioprio_set_prio_policy 是 per-cgroup bio 提交路径策略;两者可叠加——ionice 改进程的 ioprio,cgroup 策略改 bio 的 ioprio,后者影响 page cache writeback IO 而 ionice 不影响)、ioc_weight_write(互补:weight 是 cgroup 间份额比例,ionice 是进程内绝对优先级类)",
+        "caveats": "需 CAP_SYS_ADMIN/CAP_SYS_NICE 改他人进程,Realtime 类非 root 不可用(man 原文)。2.6.13+ 配 CFQ I/O scheduler 才支持。man 原文:未指定类时默认 best-effort、默认优先级 4。2.6.26 前 CFQ 把未指定 ioprio 的进程按 cpu nice 派生 ioprio=(nice+20)/5;2.6.26+ 继承 CPU 调度类并按 nice 派生。注意:ionice 是进程级入口,改不了 page cache writeback IO 的优先级——后者由 ioprio_set_prio_policy cgroup 策略覆盖(见 tunable.version_notes)。"
+      },
+      {
+        "tool": "blockdev",
+        "function": "从命令行调用块设备 ioctl(util-linux)。设/取 readahead、块大小、只读标志、刷缓冲、重读分区表等。",
+        "key_options": [
+          {
+            "opt": "--setra sectors",
+            "semantics": "设 readahead(单位 512 字节扇区)。"
+          },
+          {
+            "opt": "--getra",
+            "semantics": "取 readahead(512 字节扇区)。"
+          },
+          {
+            "opt": "--setfra sectors",
+            "semantics": "设 filesystem readahead(2.6 内核等价 --setra)。"
+          },
+          {
+            "opt": "--getfra",
+            "semantics": "取 filesystem readahead。"
+          },
+          {
+            "opt": "--setbsz bytes",
+            "semantics": "设块大小。man 原文:仅对当前打开块设备的 fd 有效,blockdev 退出后失效(不持久)。"
+          },
+          {
+            "opt": "--getbsz",
+            "semantics": "取块大小(字节,man 原文:不是设备拓扑,是内核/fs 内部用,可能被 fs driver 在 mount 时改)。"
+          },
+          {
+            "opt": "--setro / --setrw",
+            "semantics": "设只读/读写。setro 后已挂载的 rw fs 不受影响,改在 remount 后生效(man 原文)。"
+          },
+          {
+            "opt": "--getro",
+            "semantics": "取只读标志(1=只读)。"
+          },
+          {
+            "opt": "--flushbufs",
+            "semantics": "刷缓冲。"
+          },
+          {
+            "opt": "--rereadpt",
+            "semantics": "重读分区表。"
+          },
+          {
+            "opt": "--getss / --getpbsz / --getiomin / --getioopt / --getmaxsect / --getalignoff / --getzonesz / --getdiscardzeroes / --getdiskseq / --getsize64 / --getsz",
+            "semantics": "取逻辑扇区/物理块/最小IO/最优IO/最大扇区/对齐偏移/zone大小(512B扇区)/discard-zeroes/磁盘序列号/字节数/512B扇区数。"
+          },
+          {
+            "opt": "--report [device...]",
+            "semantics": "打印设备报告(无参数则列 /proc/partitions 所有设备,StartSec 单位 512B 扇区)。"
+          },
+          {
+            "opt": "-q / -v",
+            "semantics": "静默/详尽。"
+          }
+        ],
+        "when_to_use": "io-scheduler:--setra 调 readahead 是 per-device IO 调参(非 boot-only,运行时改,但重启或重新打开设备后 --setbsz 失效);--setro/--flushbufs 是运维操作。注意 elevator cmdline 已废弃,改 IO 调度器用 /sys/block/<dev>/queue/scheduler 而非本工具(blockdev 不直接切 scheduler)。rule R3-fs-corruption-protection:--setro 给已挂载设备设只读是软限制,remount 才生效,真硬开关是 bdev_allow_write_mounted。",
+        "kernel_alternative": "(无对应 io tunable;blockdev 改的 readahead/blocksize/readonly 是块设备队列属性,本模块 tunable 只有 cgroup iocost/ioprio + boot-only elevator/bdev_allow_write_mounted,无 per-device readahead 项。elevator_setup(互补但已废弃:no runtime,改 IO 调度器用 /sys/block/<dev>/queue/scheduler 而非 blockdev)、setup_bdev_allow_write_mounted(互补:boot-only 防裸写已挂载设备,blockdev --setro 是运行时设只读标志,语义不同)",
+        "caveats": "--setbsz 不持久(man 原文:仅对 blockdev 持有的 fd 有效,退出即失效)。--setro 对已挂载 rw fs 不影响,remount 后才生效(man 原文)。readahead 单位是 512 字节扇区不是 KB。需 root(对块设备 ioctl)。无参数 --report 列 /proc/partitions 全部设备。man 原文:可对多设备多命令一次性调用。"
+      },
+      {
+        "tool": "lsblk",
+        "function": "列出块设备及拓扑(util-linux)。读 sysfs 与 udev db 收集信息,默认树形输出(同设备可能在树中重复出现,复杂 N:M 关系用 --merge)。可显示 NAME/TYPE/SIZE/MOUNTPOINTS/FSTYPE/UUID/SCHED/RA 等列。",
+        "key_options": [
+          {
+            "opt": "-o, --output list",
+            "semantics": "指定输出列(用 --list-columns 查全部)。list 可 +col 形式追加默认列(如 -o +UUID)。脚本里应显式 -o,避免依赖默认列变化(man 原文)。"
+          },
+          {
+            "opt": "-t, --topology",
+            "semantics": "等价 -o NAME,ALIGNMENT,MIN-IO,OPT-IO,PHY-SEC,LOG-SEC,ROTA,SCHED,RQ-SIZE,RA,WSAME——看 IO 调度器(SCHED)、请求队列大小(RQ-SIZE)、readahead(RA)、扇区大小、是否旋转(ROTA)。"
+          },
+          {
+            "opt": "-f, --fs",
+            "semantics": "等价 -o NAME,FSTYPE,FSVER,LABEL,UUID,FSAVAIL,FSUSE%,MOUNTPOINTS。"
+          },
+          {
+            "opt": "-d, --nodeps",
+            "semantics": "不打印 holder/slave 设备(只看该设备本身)。"
+          },
+          {
+            "opt": "-p, --paths",
+            "semantics": "打印完整设备路径(/dev/sda 而非 sda)。"
+          },
+          {
+            "opt": "-l, --list",
+            "semantics": "列表输出(非树),v2.34+ 每设备只打一次。"
+          },
+          {
+            "opt": "-J, --json",
+            "semantics": "JSON 输出(建议同时 -o;children[] 仅在 NAME 列或 --tree 时使用)。"
+          },
+          {
+            "opt": "-b, --bytes",
+            "semantics": "字节数(非人类可读,默认字节 1024 进制,显示时缩为 '1 K' 略去 'iB')。"
+          },
+          {
+            "opt": "-N, --nvme / -S, --scsi / -v, --virtio",
+            "semantics": "只列 NVMe / SCSI / virtio 设备。"
+          },
+          {
+            "opt": "-D, --discard / -z, --zoned",
+            "semantics": "-D 显示 discard(TRIM/UNMAP) 能力;-z 显示 zone 信息。"
+          },
+          {
+            "opt": "-I, --include list / -e, --exclude list",
+            "semantics": "按主设备号 include/exclude 列表过滤(只过滤顶层设备)。"
+          },
+          {
+            "opt": "--filter expr / --highlight expr",
+            "semantics": "EXPERIMENTAL:用 scols-filter(5) 表达式预过滤/高亮(评估在收集数据前,比 grep 快)。"
+          },
+          {
+            "opt": "-x, --sort column",
+            "semantics": "按列排序(隐含 --list)。"
+          }
+        ],
+        "when_to_use": "io-stats-observation(rule R2-unknown-io-bottleneck):lsblk -t 先看设备拓扑(SCHED 列看当前 IO 调度器、RA 列看 readahead、RQ-SIZE 看队列深度)→ lsblk -o NAME,MAJ:MIN,SIZE,MOUNTPOINTS 配 /proc/diskstats 做 major:minor 关联→ lsblk -f 看设备归属文件系统。rule R1-cgroup-io-share-unfair:调 iocost 前用 lsblk -o NAME,MAJ:MIN 拿 MAJ:MIN 用于 cost.qos/cost.model 的 per-device 写法。rule R3-fs-corruption-protection:lsblk -o MOUNTPOINTS 看 bdev_allow_write_mounted 影响哪些已挂载设备。",
+        "kernel_alternative": "(无,纯观察工具;对应 readonly 是 partitions_op,/proc/partitions 的用户态增强版——lsblk 还读 udev db 与 sysfs 提供拓扑/FS/调度器/RA 列,不是 tunable)",
+        "caveats": "读 sysfs + udev db;udev db 缺失或编译未带 udev 支持时尝试直接读设备(需 root,man 原文)。man 原文:默认输出/默认 -f/-t 输出可能变,脚本应用 -o 显式列 + --list。udev 还没收集完信息时(刚加设备)用 udevadm settle 同步。需 CONFIG_SYSFS(内核 2.6.27+ 有 /sys/dev/block)。RAID/多路径复杂 N:M 关系用 --merge。"
+      },
+      {
+        "tool": "dd",
+        "function": "复制文件并按操作数转换/格式化(GNU coreutils)。常作 IO 基准测试:用 if=/dev/zero of=testfile bs=1M count=N 测顺序写吞吐,oflag=direct 测直写(绕 page cache),iflag=direct 测直读。",
+        "key_options": [
+          {
+            "opt": "bs=BYTES",
+            "semantics": "读写块大小(默认 512),覆盖 ibs/obs。例:bs=1M。"
+          },
+          {
+            "opt": "count=N",
+            "semantics": "只复制 N 个输入块。"
+          },
+          {
+            "opt": "if=FILE / of=FILE",
+            "semantics": "输入/输出文件(默认 stdin/stdout)。"
+          },
+          {
+            "opt": "iflag=FLAGS / oflag=FLAGS",
+            "semantics": "标志:direct(直 IO 绕 page cache)、dsync/sync(同步 IO)、fullblock(读满块)、nonblock、noatime、nocache(请求丢弃缓存)、append、directory、nofollow。"
+          },
+          {
+            "opt": "conv=CONVS",
+            "semantics": "转换:fdatasync(结束前刷数据)、fsync(刷数据+元数据)、notrunc、excl、nocreat、noerror、sparse、sync(用 NUL 填到 ibs 大小)、lcase/ucase、swab、block/unblock。"
+          },
+          {
+            "opt": "skip=N / seek=N",
+            "semantics": "跳过 N 个 ibs/obs 大小的输入/输出块(seek=oseek 别名)。"
+          },
+          {
+            "opt": "status=LEVEL",
+            "semantics": "stderr 信息级别:none(仅错)/noxfer(略最终统计)/progress(周期统计)。"
+          },
+          {
+            "opt": "BYTES 后缀",
+            "semantics": "c=1,w=2,b=512,kB=1000,K=1024,MB=1000*1000,M=1024*1024,...;KiB=K,MiB=M 等。N 以 'B' 结尾按字节计而非块。"
+          }
+        ],
+        "when_to_use": "io-stats-observation:作为最简 IO 基准测试,调 iocost/ioprio 前后用 dd oflag=direct bs=1M count=1024 测顺序写吞吐、bs=4k count=10000 测小 IO 延迟做前后对比;rule R1-cgroup-io-share-unfair:在不同 cgroup 下跑 dd 看 iocost 权重/QoS 落地效果。注意 dd 是简单顺序 IO 基准,不能模拟真实混合负载(那用 fio,本机未装)。",
+        "kernel_alternative": "(无,纯基准工具;非 tunable 入口,是调参前后的可重复测量手段)",
+        "caveats": "man 原文:bs 默认 512。运行中发 USR1 信号可让 dd 打印 IO 统计到 stderr 再继续。oflag=direct 需 bs 对齐设备扇区/块(对齐错会 EINVAL)。conv=fdatasync/fsync 让 dd 在结束前刷盘(否则只写到 page cache 测不出真实设备吞吐)。nocache 请求丢弃 page cache 但不强制(见 oflag=sync)。GB/G 等后缀 1000 与 1024 之分,易混。"
+      },
+      {
+        "tool": "systemd-run",
+        "function": "在临时 .scope 或 .service 单元中运行命令;通过 --property= 设 cgroup 资源控制属性,是 cgroup v2 unified 上设 IO 限额的推荐入口(替代 libcgroup)。IO 相关:IOWeight=/StartupIOWeight=、IODeviceWeight=、IOReadBandwidthMax=/IOWriteBandwidthMax=、IOReadIOPSMax=/IOWriteIOPSMax=、IODeviceLatencyTargetSec=、IOAccounting=。",
+        "key_options": [
+          {
+            "opt": "--scope",
+            "semantics": "建临时 .scope 而非 .service;systemd-run 自己作父进程,继承调用者环境;同步执行(等命令结束)。"
+          },
+          {
+            "opt": "-p, --property=",
+            "semantics": "设 scope/service 属性,格式同 systemctl set-property。IO 相关:IOWeight=N(1..10000,默认100,等价 io.weight)、IODeviceWeight=\"dev weight\"(per-device)、IOReadBandwidthMax=\"dev bytes\"/IOWriteBandwidthMax=\"dev bytes\"(per-device 字节/秒,非 work-conserving,空闲也不超)、IOReadIOPSMax=\"dev IOPS\"/IOWriteIOPSMax=\"dev IOPS\"(per-device IOPS,同上非 work-conserving)、IODeviceLatencyTargetSec=\"dev target\"(per-device 延迟目标如 '/dev/sda 25ms',暗示 IOAccounting=yes)、IOAccounting=yes(开 IO 统计)。详见 systemd.resource-control(5)。"
+          },
+          {
+            "opt": "--service-type=",
+            "semantics": "服务类型(见 systemd.service Type=),默认 simple。建议 exec 确保命令真正启动才返回。--scope 下无效。"
+          },
+          {
+            "opt": "--slice= / --slice-inherit",
+            "semantics": "放入指定 slice;--slice-inherit 放入 systemd-run 自身所在 slice(可与 --slice= 组合为子 slice)。"
+          },
+          {
+            "opt": "-r, --remain-after-exit",
+            "semantics": "服务退出后保留单元(便于收集运行时信息,如 IO 计费)。"
+          },
+          {
+            "opt": "-G, --collect",
+            "semantics": "完成后卸载单元(无论成功失败),等价 --property=CollectMode=inactive-or-failed。"
+          },
+          {
+            "opt": "--user",
+            "semantics": "对调用者的 service manager 而非系统。"
+          },
+          {
+            "opt": "--wait",
+            "semantics": "同步等待服务结束并显示运行时/CPU/内存/IO/IP 计费信息。不可与 --scope/--no-block 合用。"
+          },
+          {
+            "opt": "--no-block",
+            "semantics": "不同步等启动完成,仅验证并入队。不可与 --wait 合用。"
+          }
+        ],
+        "when_to_use": "cgroup-io-quota(rule R1-cgroup-io-share-unfair):用 IOWeight= 设 cgroup IO 份额(等价 iocost weight)、IODeviceWeight= per-device 覆盖、IODeviceLatencyTargetSec= 设 per-device 延迟 SLA(等价 iocost cost.qos 的 rlat/wlat 但走 io.latency 接口)、IOReadBandwidthMax=/IOWriteIOPSMax= 等设 per-device 硬带宽/IOPS 上限(等价 io.max 非 work-conserving 配额)。rule R1 的 recommend 列 ioc_weight_write/ioc_qos_write 是直接写 cgroup fs,systemd-run 是其封装入口(临时跑命令场景)。IOAccounting=yes 开统计后 systemctl status 可看该单元 IO 计费。",
+        "kernel_alternative": "ioc_weight_write(IOWeight= 是其 v2 用户态入口,等价 io.weight 默认值)、ioc_qos_write(IODeviceLatencyTargetSec= 是 io.latency 接口入口,与 cost.qos 的 rlat/wlat 都是延迟 SLA 但走不同 cgroup 文件——cost.qos 是 iocost 控制器 per-device QoS,IODeviceLatencyTargetSec 是 cgroup v2 io.latency,两者机制不同)、ioc_cost_model_write(无直接 systemd 属性,需直接写 /sys/fs/cgroup/io.<name>/cost.model)、ioprio_set_prio_policy(无直接 systemd 属性,需直接写 prio.class)、setup_bdev_allow_write_mounted(boot-only no runtime:无 systemd 属性等价)",
+        "caveats": "默认 Type=simple,manager 在 fork 成功后即认为启动成功(execve 前就返回,命令可能没起来也算成功)——要确保命令真正启动用 --service-type=exec。$ 字符会被 manager 变量扩展,要禁用 --expand-environment=no(--scope 默认禁用)。--scope 与 --wait/--pty/--on-* 互斥。IODeviceWeight=/IODeviceLatencyTargetSec= 的 device 路径 man 原文:应是带 IO 调度器的物理设备,不应是分区或 loop,文件路径会尝试发现底层物理设备但对 RAID/LVM 复杂存储发现不正确(man 原文)。IOReadBandwidthMax=/IOWriteIOPSMax= 是非 work-conserving(空闲也不超),与 iocost weight 的工作保守语义不同。需 cgroup v2 unified hierarchy。"
+      },
+      {
+        "tool": "cgcreate",
+        "function": "创建新 cgroup(libcgroup)。可用传统 -g <controllers>:<path>(走 systemd 委派层级)或 -c 创建 systemd scope(适配 v2 unified)。",
+        "key_options": [
+          {
+            "opt": "-g <controllers>:<path>",
+            "semantics": "定义要建的 cgroup。controllers 是控制器列表(逗号分隔),'*' = 所有已挂载控制器。path 是相对路径。可多次用建多个 cgroup。"
+          },
+          {
+            "opt": "-c, --scope",
+            "semantics": "建 systemd scope 而非传统 cgroup。-g 后路径必须是 <slice-name>.slice/<scope-name>.scope 形式。slice 不存在 systemd 自动建。libcgroup 在 scope 的 cgroup.procs 放一个 idle 进程(除非 -p)。适配 cgroup v2 unified 的方式。"
+          },
+          {
+            "opt": "-p, --pid=pid",
+            "semantics": "把指定 pid 移入 -c 建的 scope。必须与 -c 合用。"
+          },
+          {
+            "opt": "-b",
+            "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根层级构造(v1 风格直接写根)。"
+          },
+          {
+            "opt": "-S, --setdefault",
+            "semantics": "把 -c 建的 scope 设为 libcgroup 默认 scope。后续 libcgroup 工具用此 scope 拼 cgroup 路径。配合 -b 用。"
+          },
+          {
+            "opt": "-a <agid>:<auid>",
+            "semantics": "设控制文件(参数文件)的 user:group 拥有者。这些用户可设子系统参数与建子 cgroup。默认继承父。"
+          },
+          {
+            "opt": "-t <tuid>:<tgid>",
+            "semantics": "设 tasks 文件的 user:group 拥有者。这些用户可把任务加入此 cgroup。默认继承父。"
+          },
+          {
+            "opt": "-f, --fperm=mode / -d, --dperm=mode / -s, --tperm=mode",
+            "semantics": "设控制文件/目录/tasks 文件权限(八进制如 775)。man 原文:-f/-s 的实际权限被当前 owner 权限作 umask(777 会把 group/other 权限设成 owner 的)。"
+          }
+        ],
+        "when_to_use": "cgroup-io-quota:建 cgroup 给 io.weight/io.max/io.latency/io.cost.qos/io.prio.class 落地(等价 systemd-run 但更底层、可批量建、静态配置);rule R1-cgroup-io-share-unfair 的 cgroup 落地手段之一。-c 是 v7.2 cgroup v2 unified 上的推荐路径(走 systemd scope),-b 是 v1 风格直接写根。",
+        "kernel_alternative": "ioc_weight_write(cgcreate 建 cgroup 后写 io.weight)、ioc_qos_write(写 io.cost.qos,但只在 root io cgroup 可见)、ioc_cost_model_write(写 io.cost.model,同 root only)、ioprio_set_prio_policy(写 io.prio.class)、setup_bdev_allow_write_mounted(boot-only no runtime:无 cgroup 入口等价)",
+        "caveats": "v7.2 cgroup v2 unified 默认上:传统 -g 不带 -c 走 systemd 委派层级(默认 system.slice 或用户 root slice 下),要直接写根用 -b。man 不像 lscgroup 标 'v1 only',libcgroup 已通过 -c scope 部分适配 v2。需 root 建 cgroup。-c 的 scope 名必须严格 <slice>.slice/<scope>.scope 形式。权限 mode 用八进制。-f/-s 实际权限受 owner 当前权限 umask。CGROUP_LOGLEVEL 环境变量控日志(DEBUG/INFO/WARNING/ERROR)。配 /etc/cgconfig.conf 与 cgexec 配套用。"
+      },
+      {
+        "tool": "cgset",
+        "function": "设置已存在 cgroup 的参数(写控制文件)。libcgroup 工具。等价直接 echo > /sys/fs/cgroup/.../<file>。",
+        "key_options": [
+          {
+            "opt": "-r <name=value>",
+            "semantics": "定义要写的控制文件名与值。可多次用同时写多个参数。例:-r io.weight=500 student。"
+          },
+          {
+            "opt": "-b",
+            "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根构造(v1 风格直接写根)。"
+          },
+          {
+            "opt": "--copy-from <source_cgroup_path>",
+            "semantics": "把源 cgroup 的所有参数复制到目标 cgroup。源/目标都可作为参数多次指定。"
+          },
+          {
+            "opt": "<cgroup_path> ...",
+            "semantics": "目标 cgroup 路径,可多次指定同时设多个 cgroup。"
+          }
+        ],
+        "when_to_use": "cgroup-io-quota:改 cgroup 的 io.weight(等价 iocost weight)、io.max(per-device 带宽/IOPS 硬配额)、io.latency(per-device 延迟 SLA)、io.cost.qos/io.cost.model(若在 root io cgroup)、io.prio.class(等价 ioprio_set_prio_policy);rule R1-cgroup-io-share-unfair 的 cgroup 参数修改手段之一(等价 systemd-run --property= 但对已存在 cgroup 而非临时单元)。",
+        "kernel_alternative": "ioc_weight_write(cgset -r io.weight=N 是其用户态入口)、ioc_qos_write(-r io.cost.qos=... 在 root cgroup)、ioc_cost_model_write(-r io.cost.model=... 在 root cgroup)、ioprio_set_prio_policy(-r io.prio.class=promote-to-rt|restrict-to-be|idle|...)、setup_bdev_allow_write_mounted(boot-only no runtime:无 cgset 入口)",
+        "caveats": "v7.2 cgroup v2 unified 上:控制文件名是 v2 风格(io.weight/io.max/io.latency/io.cost.qos/io.prio.class),v1 风格名(blkio.weight)在 v2 上不可写。-b 直接写根需 root。CGROUP_LOGLEVEL 环境变量控日志。等价直接 echo > 文件,cgset 只是批量+多 cgroup 同时设的便利层。改 cgroup 参数需对该 cgroup 控制文件有写权限(root 或 cgroup owner)。man 未明确 v2 适配范围,实测 -b 直接写根可用。"
+      },
+      {
+        "tool": "cgexec",
+        "function": "在指定 cgroup 里跑命令。libcgroup 工具。等价 systemd-run --property= 但走 libcgroup/cgrules.conf 路径而非 systemd 单元。",
+        "key_options": [
+          {
+            "opt": "-g <controllers>:<path>",
+            "semantics": "指定命令在哪个 cgroup 跑。controllers 是控制器列表(逗号分隔),'*' = 所有已挂载。可多次用指定多个 cgroup。无 -g 时按 /etc/cgrules.conf 自动分配。"
+          },
+          {
+            "opt": "-b",
+            "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根构造(v1 风格直接写根)。"
+          },
+          {
+            "opt": "--sticky",
+            "semantics": "cgred daemon(cgrulesengd 进程)不改命令及其子任务的 cgroup。无此选项时 daemon 不改主任务但会按 /etc/cgrules.conf 改子任务。"
+          },
+          {
+            "opt": "-r",
+            "semantics": "替换 systemd scope 的 idle 进程为任务命令(配合 -c scope 用,见 cgcreate -c)。"
+          },
+          {
+            "opt": "command [arguments]",
+            "semantics": "要跑的命令与参数。"
+          }
+        ],
+        "when_to_use": "cgroup-io-quota:把命令直接跑在指定 io cgroup(等价 cgcreate+cgset+exec 但一步到位,适合一次性命令);rule R1-cgroup-io-share-unfair 的 cgroup 落地手段之一(长期服务用 systemd-run)。无 -g 时按 /etc/cgrules.conf 自动分配(需先配 cgrulesengd daemon)。",
+        "kernel_alternative": "ioc_weight_write(io.weight 已设的 cgroup,cgexec -g 把任务加入)、ioc_qos_write/cost.model(在 root cgroup 设的)、ioprio_set_prio_policy(io.prio.class 已设的)、setup_bdev_allow_write_mounted(boot-only no runtime:无 cgexec 入口)",
+        "caveats": "v7.2 cgroup v2 unified 上:cgroup 路径需 v2 风格。-g 路径不存在会按 /etc/cgconfig.conf spec 建(无 spec 用内核默认值)。--sticky 仅在 cgrulesengd daemon 运行时有效。man 不像 lscgroup 标 'v1 only',libcgroup 已部分适配 v2(通过 -b 直接写根或走 cgrules.conf)。CGROUP_LOGLEVEL 环境变量控日志。优先考虑 systemd-run(现代推荐,cgcreate man 自己也提 -c scope 替代)。"
+      },
+      {
+        "tool": "lscgroup",
+        "function": "列所有 cgroup 或指定 cgroup 的子组。libcgroup 工具。",
+        "key_options": [
+          {
+            "opt": "-g <controllers>:<path> (或无选项位置参数)",
+            "semantics": "列指定控制器+路径下的子 cgroup。无此参数时列所有层级所有 cgroup。例:-g io:/ 列含 io 控制器的所有 cgroup;-g io:/student 列 io:/student 下的子组。"
+          },
+          {
+            "opt": "(无)",
+            "semantics": "无 -g 时列所有层级所有 cgroup。"
+          }
+        ],
+        "when_to_use": "cgroup-io-quota:列出已建 io cgroup 看 io.weight/io.max/io.latency/io.cost.qos 配置(配合 cgget 读参数);rule R1-cgroup-io-share-unfair 验证阶段:看 cgroup 是否真的建好、子组分布。man 原文 'lscgroup is currently supported on cgroups v1 only'——v7.2 cgroup v2 unified 上不可用,改用 systemd-cgls 或 ls /sys/fs/cgroup/。",
+        "kernel_alternative": "(无,纯观察工具;对应 readonly 是 /sys/fs/cgroup 树,但 lscgroup 是 v1 only)",
+        "caveats": "man 原文明确 'lscgroup is currently supported on cgroups v1 only'。v7.2 cgroup v2 unified hierarchy 默认上不可用——改用 systemd-cgls(列 systemd 单元对应的 cgroup)或直接 ls /sys/fs/cgroup/ 替代。CGROUP_LOGLEVEL 环境变量控日志。lscgroup 是 v1 时代工具,v2 上属 deprecated。"
+      }
+    ]
+  },
   "rules": [
     {
       "id": "R1-cgroup-io-share-unfair",

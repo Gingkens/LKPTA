@@ -49,10 +49,23 @@
 - `RT_PUSH_IPI` v7.2 默认仅 PREEMPT_RT 开；非 RT 内核默认关，多 CPU 抢锁风暴场景可手动开。
 - cache-aware 调度（`llc_balancing/enabled`）默认开，与 `migration_cost_ns`/传统 LB 有交互：两者都影响迁移决策，调 cache-aware 时留意别和 migration_cost 同向过度调（可能互相抵消或叠加迁移量）。
 
+## 用户空间工具（消费 playbook.userspace_tools 落地）
+
+> 内核参数改的是"调度策略/配额/门槛"，但**任务最终落在哪个 CPU/NUMA 节点、用哪个调度类**还要用户空间工具配合。本节列sched 域常用工具，**详细字段（key_options/when_to_use/kernel_alternative/caveats）见 `playbook.json` 的 `userspace_tools` 节**——这里只给消费者选型速查。
+
+- **绑核/拓扑观察**：`taskset`（单进程绑核）、`lscpu`/`lstopo`/`hwloc-ls`（看 NUMA→LLC→Core→PU 拓扑，决定 pin 策略）、`nproc`（可用核数，验证亲和生效）。
+- **NUMA 内存策略**：`numactl`（`--cpunodebind`/`--physcpubind` 绑核、`--membind`/`--preferred`/`--interleave` 内存策略、`--balancing` 配合内核 NUMA balancing）。
+- **调度类/优先级**：`chrt`（SCHED FIFO/RR/DEADLINE/BATCH/IDLE，6.12+ `-T` 给 OTHER/BATCH 自定义 slice）、`nice`/`renice`（nice 权重，renice 改运行中进程）。
+- **cgroup 落地**：`systemd-run --property=`（现代推荐，CPUQuota=/CPUWeight=/AllowedCPUs=）、`cgcreate`/`cgset`/`cgexec`（libcgroup，通过 `-c scope` 部分适配 v2）、`lscgroup`（**v1 only，v2 不可用，改 `systemd-cgls` 或 `ls /sys/fs/cgroup/`**）。
+- **cpuset v1 接口**：`cset`（shield/proc/set 三子命令，自动建 root/system/user 三 cpuset，v7.2 cgroup v2 unified 上需手动挂 legacy 或优先用 `systemd-run --property=AllowedCPUs=`）。
+
+工具不替代 tunable：`kernel_alternative` 字段标明每个工具替代/互补哪个内核参数（kernel_name 引用），改 tunable 后用工具把决策落到任务。boot-only 参数（`isolcpus`/`nohz_full`/`rt_group_sched`）运行时改不了，靠 `taskset`/`cset`/`systemd-run AllowedCPUs=` 在运行时实现等价隔离。
+
 ## 配套
 
 > 以下命令在模块目录内跑（`--knowledge .` 指当前目录）；在仓库根跑则用全路径如 `--knowledge knowledge/v7.2-rc7/sched`。
 - 列模块所有参数摘要：`python3 query.py --knowledge . --list`
 - 取某参数完整记录：`python3 query.py --knowledge . --name sysctl_sched_base_slice`
 - 诊断流程与规则（智能/规则/混合三模式）：见同目录 `playbook.json`，用 `python3 query.py --knowledge . --playbook [--mode {intelligent|rule|hybrid}]` 取。
+- 用户空间工具清单：同 `playbook.json` 的 `userspace_tools` 节，用 `python3 query.py --knowledge . --playbook` 取（含完整 key_options/when_to_use/kernel_alternative/caveats）。
 - 不懂的术语：`python3 query.py --vocab knowledge/vocab.json --name EEVDF`

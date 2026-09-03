@@ -50,12 +50,26 @@
 - `laptop_mode`、`swapaccount` 在 v7.2-rc7 仍废弃（handler 仅 pr_warn），改无效——收录只为让消费者知道别再调。
 - `randomize_va_space` 在 `/proc/sys/kernel/`（不在 `/proc/sys/vm/`），属 mm 但注册在 kernel 命名空间。
 
+## 用户空间工具（消费 playbook.userspace_tools 落地）
+
+> 内核参数改的是"回收阈值/swap 倾向/THP 开关/oom 策略"，但**观察内存压力、关 swap、设 hugepage、cgroup 内存限额**还要用户空间工具配合。详见 `playbook.json` 的 `userspace_tools` 节。
+
+- **内存压力观察**：`free -h`（总量）、`vmstat -s`（pgsteal/pgscan/compact_stall 等事件计数）、`vmstat -w`（wide 列 free/buff/cache/si/so）、`sar -B`（paging: pgscank/pgscand/pgsteal）、`sar -r ALL`（kbmemfree/kbavail/kbdirty/kbactive/kbinact/kbslab）、`sar -W`（swapping: pswpin/pswpout）、`sar -H`（hugepages: kbhugfree/kbhugused/kbhugsurp）、`slabtop`（slab top）、`sar -q MEM`（PSI %smem/%fmem）。
+- **NUMA 局部性观察**：`numastat`（per-node hit/miss/foreign）、`numastat -p PID`（进程级）、`numastat -m`（per-node meminfo 风格）、`numactl -H`（节点清单）。
+- **swap 操作**：`swapon -p priority /dev/...`（启用+优先级 0-32767）、`swapon -d[policy=once|pages]`（SSD discard）、`swapoff -a`（全部禁用，退出码 0/32/64，2=OOM 停 swap）、`swapon --show`（清单）。
+- **内核参数运行时读写**：`sysctl vm.swappiness=X`（设）、`sysctl -w vm.dirty_ratio=N`、`sysctl --system`（重载 /etc/sysctl.d/*.conf）、`sysctl -p /etc/sysctl.conf`。
+- **cgroup 内存限额（v2 现代）**：`systemd-run --property=MemoryMin=`（硬保护）、`--property=MemoryLow=`（软保护）、`--property=MemoryHigh=`（节流）、`--property=MemoryMax=`（硬限，等价 memory.max）、`--property=MemorySwapMax=`（swap 限）、`--property=MemoryZSwapMax=`（zswap 限）、`--property=OOMPolicy=`/`--property=OOMScoreAdjust=`/`--property=AllowedMemoryNodes=`（NUMA 限定）。
+- **cgroup 内存限额（libcgroup）**：`cgcreate`/`cgset`/`cgexec`（通过 `-c scope` 部分适配 v2，写 `memory.max`/`memory.high`/`memory.swap.max`/`memory.reclaim`/`memory.oom.group`/`hugetlb.<size>.max`/`cpuset.mems`）；`lscgroup`（**v1 only，v2 不可用**，改 `systemd-cgls` 或 `ls /sys/fs/cgroup/`）。
+
+工具不替代 tunable：`kernel_alternative` 字段标明每个工具替代/互补哪个内核参数（kernel_name 引用，如 `vm_swappiness`/`vm_dirty_ratio`/`watermark_scale_factor`/`memory_max_write`/`swap_max_write`/`hugetlb_sysctl_handler`/`setup_transparent_hugepage`/`setup_numabalancing` 等）。boot-only 的 cmdline（`thp=`/`numa_balancing=`/`transparent_hugepage=`）运行时改不了，靠 `sysctl` 或直接写 cgroup 实现等价。hugeadm（libhugetlbfs）本机未装未读，需要时自行装。
+
 ## 配套
 
 > 以下命令在模块目录内跑（`--knowledge .` 指当前目录）；在仓库根跑则用全路径如 `--knowledge knowledge/v7.2-rc7/sched`。
 - 列模块所有参数摘要：`python3 query.py --knowledge . --list`
 - 取某参数完整记录：`python3 query.py --knowledge . --name vm_swappiness`
 - 诊断流程与规则（智能/规则/混合三模式）：见同目录 `playbook.json`，用 `python3 query.py --knowledge . --playbook [--mode {intelligent|rule|hybrid}]` 取。
+- 用户空间工具清单：同 `playbook.json` 的 `userspace_tools` 节，用 `python3 query.py --knowledge . --playbook` 取（含完整 key_options/when_to_use/kernel_alternative/caveats）。
 - 不懂的术语：`python3 query.py --vocab knowledge/vocab.json --name THP`
 
 > v7.2-rc7 增量说明：参数层已 verify（missing=0/extra=0/drifted=0），与 v7.1.0-rc5 相比 0 增删 0 字段变化、0 语义变化（default/range/gate/行为均逐个核对源码无变化，证据见 `tunable.json` 顶层 `carry_forward_notes`）。本 README 与 v7.1.0-rc5 等价，仅版本号同步。

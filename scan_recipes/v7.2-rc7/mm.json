@@ -1,289 +1,272 @@
 {
   "module": "mm",
-  "version": "v7.1.0-rc5",
+  "version": "v7.2-rc7",
   "sources": [
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/page_alloc.c:page_alloc_sysctl_init",
-      "filter": { "table": "page_alloc_sysctl_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "page_alloc_sysctl_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/vmscan.c:kswapd_init",
-      "filter": { "table": "vmscan_sysctl_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "vmscan_sysctl_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/compaction.c:kcompactd_init",
-      "filter": { "table": "vm_compaction" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "vm_compaction"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/vmstat.c:init_mm_internals",
-      "filter": { "table": "vmstat_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "vmstat_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/util.c:init_vm_util_sysctls",
-      "filter": { "table": "util_sysctl_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "util_sysctl_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/oom_kill.c:oom_init",
-      "filter": { "table": "vm_oom_kill_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "vm_oom_kill_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/mmap.c:mmap_init",
-      "filter": { "table": "mmap_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "mmap_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/swap.c:swap_setup",
-      "filter": { "table": "swap_sysctl_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "swap_sysctl_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/hugetlb_sysctl.c:hugetlb_sysctl_init",
-      "filter": { "table": "hugetlb_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "hugetlb_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/hugetlb_vmemmap.c:hugetlb_vmemmap_init",
-      "filter": { "table": "hugetlb_vmemmap_sysctls", "config": ["CONFIG_HUGETLB_PAGE_OPTIMIZE_VMEMMAP"] },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "hugetlb_vmemmap_sysctls",
+      "config": ["CONFIG_HUGETLB_PAGE_OPTIMIZE_VMEMMAP"]
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/filemap.c:pagecache_init",
-      "filter": { "table": "filemap_sysctl_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "filemap_sysctl_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/page-writeback.c:page_writeback_init",
-      "filter": { "table": "vm_page_writeback_sysctls" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "vm_page_writeback_sysctls"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/memory-failure.c:memory_failure_init",
-      "filter": { "table": "memory_failure_table", "config": ["CONFIG_MEMORY_FAILURE"] },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/vm"
+      "path_prefix": "/proc/sys/vm",
+      "table": "memory_failure_table",
+      "config": ["CONFIG_MEMORY_FAILURE"]
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "mm/memory.c:init_mm_sysctl",
-      "filter": { "table": "mmu_sysctl_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/kernel"
-    },
-
-    {
-      "mechanism": "cftype",
-      "locator": "mm/memcontrol.c:memory_cgrp_subsys",
-      "filter": {
-        "cftype_array": "memory_files",
-        "cftype_locator": "mm/memcontrol.c:memory_files",
-        "binding": "dfl_cftypes",
-        "subsys": "memory_cgrp_subsys",
-        "name": ["current", "peak", "min", "low", "high", "max", "events", "events.local", "stat", "numa_stat", "oom.group", "reclaim"],
-        "config": ["CONFIG_MEMCG"]
-      },
-      "interface": "cgroup",
-      "path_prefix": "/sys/fs/cgroup/memory.<name>"
+      "path_prefix": "/proc/sys/vm",
+      "table": "mmu_sysctl_table"
     },
     {
       "mechanism": "cftype",
       "locator": "mm/memcontrol.c:memory_cgrp_subsys",
-      "filter": {
-        "cftype_array": "swap_files",
-        "cftype_locator": "mm/memcontrol.c:swap_files",
-        "binding": "dfl_cftypes",
-        "subsys": "memory_cgrp_subsys",
-        "name": ["swap.current", "swap.high", "swap.max", "swap.peak", "swap.events"],
-        "config": ["CONFIG_MEMCG_SWAP"]
-      },
       "interface": "cgroup",
-      "path_prefix": "/sys/fs/cgroup/memory.<name>"
+      "path_prefix": "/sys/fs/cgroup/memory.<name>",
+      "filter": {"cftype_locator": "mm/memcontrol.c:memory_files"},
+      "names": ["current", "peak", "min", "low", "high", "max", "events", "events.local", "stat", "numa_stat", "oom.group", "reclaim"],
+      "config": ["CONFIG_MEMCG"]
     },
     {
       "mechanism": "cftype",
       "locator": "mm/memcontrol.c:memory_cgrp_subsys",
-      "filter": {
-        "cftype_array": "zswap_files",
-        "cftype_locator": "mm/memcontrol.c:zswap_files",
-        "binding": "dfl_cftypes",
-        "subsys": "memory_cgrp_subsys",
-        "name": ["zswap.current", "zswap.max", "zswap.writeback"],
-        "config": ["CONFIG_ZSWAP"]
-      },
       "interface": "cgroup",
-      "path_prefix": "/sys/fs/cgroup/memory.<name>"
+      "path_prefix": "/sys/fs/cgroup/memory.<name>",
+      "filter": {"cftype_locator": "mm/memcontrol.c:swap_files"},
+      "names": ["swap.current", "swap.high", "swap.max", "swap.peak", "swap.events"],
+      "config": ["CONFIG_MEMCG_SWAP"]
     },
-
+    {
+      "mechanism": "cftype",
+      "locator": "mm/memcontrol.c:memory_cgrp_subsys",
+      "interface": "cgroup",
+      "path_prefix": "/sys/fs/cgroup/memory.<name>",
+      "filter": {"cftype_locator": "mm/memcontrol.c:zswap_files"},
+      "names": ["zswap.current", "zswap.max", "zswap.writeback"],
+      "config": ["CONFIG_ZSWAP"]
+    },
     {
       "mechanism": "proc_create_seq",
       "locator": "mm/vmstat.c:init_mm_internals",
-      "filter": { "name": ["buddyinfo", "zoneinfo", "vmstat", "pagetypeinfo"] },
       "interface": "proc",
-      "path_prefix": "/proc"
+      "path_prefix": "/proc",
+      "names": ["buddyinfo", "zoneinfo", "vmstat", "pagetypeinfo"]
     },
     {
-      "mechanism": "proc_create_seq",
+      "mechanism": "proc_create_data",
       "locator": "fs/proc/meminfo.c:proc_meminfo_init",
-      "filter": { "name": "meminfo" },
       "interface": "proc",
-      "path_prefix": "/proc"
-    },
-
-    {
-      "mechanism": "proc_pid_entry",
-      "locator": "fs/proc/base.c:tgid_base_stuff",
-      "filter": {
-        "name": ["smaps", "smaps_rollup", "maps", "numa_maps", "clear_refs", "pagemap", "mem"],
-        "show": "fs/proc/task_mmu.c:proc_pid_smaps_op"
-      },
-      "interface": "proc",
-      "path_prefix": "/proc/<pid>"
+      "path_prefix": "/proc",
+      "names": ["meminfo"]
     },
     {
       "mechanism": "proc_pid_entry",
       "locator": "fs/proc/base.c:tgid_base_stuff",
-      "filter": {
-        "name": ["oom_score"],
-        "show": "fs/proc/base.c:proc_oom_score"
-      },
       "interface": "proc",
-      "path_prefix": "/proc/<pid>"
+      "path_prefix": "/proc/<pid>",
+      "filter": {"show": "fs/proc/task_mmu.c:proc_pid_smaps_op"},
+      "names": ["smaps", "smaps_rollup", "maps", "numa_maps", "clear_refs", "pagemap", "mem"]
     },
-
+    {
+      "mechanism": "proc_pid_entry",
+      "locator": "fs/proc/base.c:tgid_base_stuff",
+      "interface": "proc",
+      "path_prefix": "/proc/<pid>",
+      "filter": {"show": "fs/proc/base.c:proc_oom_score"},
+      "names": ["oom_score"]
+    },
     {
       "mechanism": "__setup",
       "locator": "mm/huge_memory.c:setup_transparent_hugepage",
-      "filter": { "param": "transparent_hugepage" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "transparent_hugepage"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/huge_memory.c:setup_thp_anon",
-      "filter": { "param": "thp_anon" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "thp_anon"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/mempolicy.c:setup_numabalancing",
-      "filter": { "param": "numa_balancing", "config": "CONFIG_NUMA_BALANCING" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "numa_balancing",
+      "config": "CONFIG_NUMA_BALANCING"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/memory_hotplug.c:setup_memhp_default_state",
-      "filter": { "param": "memhp_default_state", "config": "CONFIG_MEMORY_HOTPLUG" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "memhp_default_state",
+      "config": "CONFIG_MEMORY_HOTPLUG"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/hugetlb.c:hugepage_alloc_threads_setup",
-      "filter": { "param": "hugepage_alloc_threads" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "hugepage_alloc_threads"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/memblock.c:reserve_mem",
-      "filter": { "param": "reserve_mem" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "reserve_mem"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/memcontrol.c:setup_swap_account",
-      "filter": { "param": "swapaccount", "config": "CONFIG_MEMCG_SWAP" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "swapaccount",
+      "config": "CONFIG_MEMCG_SWAP"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/memcontrol.c:cgroup_memory",
-      "filter": { "param": "cgroup.memory", "config": "CONFIG_MEMCG" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "cgroup.memory",
+      "config": "CONFIG_MEMCG"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/mmap.c:cmdline_parse_stack_guard_gap",
-      "filter": { "param": "stack_guard_gap" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "stack_guard_gap"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/mm_init.c:set_hashdist",
-      "filter": { "param": "hashdist" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "hashdist"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/memory.c:disable_randmaps",
-      "filter": { "param": "norandmaps" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "norandmaps"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/slab_common.c:setup_slab_nomerge",
-      "filter": { "param": "slab_nomerge" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "slab_nomerge"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/slab_common.c:setup_slab_merge",
-      "filter": { "param": "slab_merge" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "slab_merge"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/shmem.c:setup_transparent_hugepage_shmem",
-      "filter": { "param": "transparent_hugepage_shmem" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "transparent_hugepage_shmem"
     },
     {
       "mechanism": "__setup",
       "locator": "mm/shmem.c:setup_thp_shmem",
-      "filter": { "param": "thp_shmem" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "thp_shmem"
     }
   ]
 }

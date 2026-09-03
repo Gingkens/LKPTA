@@ -1,0 +1,61 @@
+{
+  "module": "io",
+  "version": "v7.2-rc7",
+  "sources": [
+    {
+      "mechanism": "cftype",
+      "locator": "block/blk-cgroup.c:io_cgrp_subsys",
+      "interface": "cgroup",
+      "path_prefix": "/sys/fs/cgroup/io.<name>",
+      "filter": {"cftype_locator": "block/blk-cgroup.c:blkcg_files"},
+      "names": ["stat"]
+    },
+    {
+      "mechanism": "cftype",
+      "locator": "block/blk-cgroup.c:io_cgrp_subsys",
+      "interface": "cgroup",
+      "path_prefix": "/sys/fs/cgroup/io.<name>",
+      "filter": {"cftype_locator": "block/blk-cgroup.c:blkcg_legacy_files"},
+      "names": ["reset_stats"]
+    },
+    {
+      "mechanism": "cftype",
+      "locator": "block/blk-iocost.c:blkcg_policy_iocost",
+      "interface": "cgroup",
+      "path_prefix": "/sys/fs/cgroup/io.<name>",
+      "filter": {"cftype_locator": "block/blk-iocost.c:ioc_files"},
+      "names": ["cost.model", "cost.qos", "weight"],
+      "config": ["CONFIG_BLK_CGROUP_IOCOST"]
+    },
+    {
+      "mechanism": "cftype",
+      "locator": "block/blk-ioprio.c:ioprio_policy",
+      "interface": "cgroup",
+      "path_prefix": "/sys/fs/cgroup/io.<name>",
+      "filter": {"cftype_locator": "block/blk-ioprio.c:ioprio_files"},
+      "names": ["prio.class"],
+      "config": ["CONFIG_BLK_CGROUP_IOPRIO"]
+    },
+    {
+      "mechanism": "proc_create_seq",
+      "locator": "block/genhd.c:proc_genhd_init",
+      "interface": "proc",
+      "path_prefix": "/proc",
+      "names": ["diskstats", "partitions"]
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "block/elevator.c:elevator_setup",
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline",
+      "param": "elevator"
+    },
+    {
+      "mechanism": "__setup",
+      "locator": "block/bdev.c:setup_bdev_allow_write_mounted",
+      "interface": "cmdline",
+      "path_prefix": "kernel cmdline",
+      "param": "bdev_allow_write_mounted"
+    }
+  ]
+}

@@ -457,6 +457,508 @@
       }
     ]
   },
+  "userspace_tools": {
+    "_doc": "mm 域用户空间工具清单。读 man page 产出,非训练数据印象。每条 tool=命令名, function=干什么, key_options=关键参数(真读 man 后记下语义/默认值/约束), when_to_use=何时用(映射到 mm capability 的 when_applies 或 rule 的 symptom), kernel_alternative=该工具能替代/互补哪个 tunable(kernel_name 引用,boot-only 的标 no runtime), caveats=坑(权限/边界行为/版本差异)。工具不列优先级——消费者按场景选。v1/v2 兼容:cgroup 工具(lscgroup v1 only,cgroup-tools -c scope 部分适配 v2)、systemd-run 是 v2 现代。共 13 个工具(free/vmstat/sar/slabtop/numastat/swapon/swapoff/sysctl/systemd-run/cgcreate/cgset/cgexec/lscgroup)。未装未读:hugeadm(libhugetlbfs 未装,无 man entry)。",
+    "tools": [
+      {
+        "tool": "free",
+        "function": "显示系统已用/空闲物理内存与 swap 摘要(及内核 buffers/cache)。数据来自 /proc/meminfo。",
+        "key_options": [
+          {
+            "opt": "-h, --human",
+            "semantics": "自动按 Ki/Mi/Gi/Ti/Pi 缩放到三位有效数字+单位。"
+          },
+          {
+            "opt": "-w, --wide",
+            "semantics": "宽行模式,buffers 与 cache 分两列显示(默认合并为 buff/cache)。"
+          },
+          {
+            "opt": "-c, --count N (需 -s)",
+            "semantics": "刷新 N 次后退出,需配合 -s。"
+          },
+          {
+            "opt": "-s, --seconds delay",
+            "semantics": "每 delay 秒刷一次,可浮点(支持 . 或 , 作小数点)。"
+          },
+          {
+            "opt": "-l, --lohi",
+            "semantics": "显示 Low/High 内存详情(仅 CONFIG_HIGHMEM 有意义)。"
+          },
+          {
+            "opt": "-t, --total",
+            "semantics": "末尾加一行汇总。"
+          },
+          {
+            "opt": "-v, --committed",
+            "semantics": "显示 commit limit 与已 committed/uncommitted 内存一行,在 overcommit 关闭时相关。"
+          },
+          {
+            "opt": "(默认单位)",
+            "semantics": "默认 KiB;--si 切到 1000 进制(kilo/mega...)而非 1024 进制。"
+          }
+        ],
+        "when_to_use": "reclaim-pressure(rule R1-reclaim-low-efficiency):看 free/available 抖动判断 kswapd 频繁唤起的内存低位;dirty-writeback:看 cache 总量作为 dirtyable 基数参考;oom-policy:看 available 是否逼近 0。rule R1/R3/R4 read 阶段先 free 看总体内存压力;脚本用 free -h | awk 取 available 列做阈值判断。",
+        "kernel_alternative": "vm_swappiness(互补:free 看 swap 用量辅助判断是否要调 swappiness 倾向)、sysctl_overcommit_memory/sysctl_overcommit_ratio(互补:-v 显示 CommitLimit 与 committed,直观 overcommit 策略是否生效)",
+        "caveats": "available 字段估算可启动新应用的内存,与 cache/free 不同——它扣除了不可回收的 slab。shared 列在 <2.6.32 内核显示 0。MAN 原文:数据来自 /proc/meminfo,任何 procps-ng 都能跑,无 root。"
+      },
+      {
+        "tool": "vmstat",
+        "function": "报告虚拟内存统计(processes/memory/paging/block IO/traps/disks/cpu)。无 delay 只打印自启动以来平均值;有 delay 按采样间隔刷新。",
+        "key_options": [
+          {
+            "opt": "-a, --active",
+            "semantics": "显示 active/inactive 内存列(2.5.41+ 内核)。"
+          },
+          {
+            "opt": "-w, --wide",
+            "semantics": "宽行模式,避免大内存机器列被截断。"
+          },
+          {
+            "opt": "-s, --stats",
+            "semantics": "显示事件计数表与内存统计(不循环)。含 pgsteal/pgscan/compact_stall 等。"
+          },
+          {
+            "opt": "-d, --disk",
+            "semantics": "报告磁盘统计(2.5.70+)。"
+          },
+          {
+            "opt": "-D, --disk-sum",
+            "semantics": "报告磁盘活动汇总。"
+          },
+          {
+            "opt": "-p, --partition device",
+            "semantics": "指定分区详情(2.5.70+)。"
+          },
+          {
+            "opt": "-m, --slabs",
+            "semantics": "显示 slabinfo(需可读 /proc/slabinfo)。"
+          },
+          {
+            "opt": "-t, --timestamp",
+            "semantics": "每行加时间戳。"
+          },
+          {
+            "opt": "-y, --no-first",
+            "semantics": "省略自启动以来的首行平均值。"
+          },
+          {
+            "opt": "-S, --unit {k|K|m|M}",
+            "semantics": "切换单位:1000(k)/1024(K)/1000000(m)/1048576(M)字节,不改 block 字段。"
+          },
+          {
+            "opt": "-n, --one-header",
+            "semantics": "仅显示表头一次而非每轮。"
+          },
+          {
+            "opt": "delay [count]",
+            "semantics": "采样间隔(秒),无 count 则无限循环;无 delay 仅一次自启动平均值。"
+          }
+        ],
+        "when_to_use": "reclaim-pressure(rule R1):看 si/so(swap in/out)与 free/buff/cache 趋势判回收抖动;看 pgsteal_kswapd/pgscan_kswapd 比例算回收效率(对应 thresholds.reclaim_efficiency_ratio)。fragmentation(rule R2):看 -s 的 compact_stall/compact_fail/compact_success 判紧缩 stall。dirty-writeback(rule R3):看 nr_dirty/nr_writeback 算脏页比。numa-locality:vmstat -s 含 numa_hint_faults 等统计(配合 sysctl_vm_numa_stat=1)。dirty-writeback 与 reclaim-pressure 都用 vmstat 做 read 阶段。脚本用 vmstat 1 5 取 5 轮采样平均。",
+        "kernel_alternative": "vmstat_refresh(互补:vmstat 读数滞后时写 /proc/sys/vm/stat_refresh 强制同步 per-CPU 计数)、sysctl_stat_interval(互补:vmstat 的 per-CPU 同步间隔由 stat_interval 决定,调大 vmstat 更滞后)、vm_swappiness(互补:vmstat 看 pgsteal anon vs file 比例辅助判 swappiness 是否匹配工作负载)、sysctl_vm_numa_stat(互补:vmstat -s 的 numa_hint_faults 等计数受此开关控制,关后清零不累计)",
+        "caveats": "MAN 原文:需对 /proc 下文件读权限。-m 需读 /proc/slabinfo(标准用户可能不可见),/proc subset=pid 挂载选项也影响可见性。无 delay 时首行是自启动平均,作判断需 -y 跳过。CPU 列 us/sy/id/wa/st 含义见 man FIELD DESCRIPTION。"
+      },
+      {
+        "tool": "sar",
+        "function": "收集/报告/保存系统活动信息(累计计数器,基于 count/interval 采样)。能落盘作历史,与 vmstat 区别在可回放+多视角。-B/-r/-S/-H/-W/-q MEM 覆盖 mm 全域观察。",
+        "key_options": [
+          {
+            "opt": "-B",
+            "semantics": "报告 paging 统计:pgpgin/s、pgpgout/s、fault/s、majflt/s、pgfree/s、pgscank/s(kswapd 扫描)、pgscand/s(direct 扫描)、pgsteal/s(回收)、pgprom/s(promote)、pgdem/s(demote)。"
+          },
+          {
+            "opt": "-r [ALL]",
+            "semantics": "报告内存利用:kbmemfree、kbmemused、%memused、kbavail、kbbuffers、kbcached、kbcommit、%commit、kbactive、kbinact、kbdirty、kbanonpg、kbslab、kbkstack、kbpgtbl、kbvmusd 等。ALL 显示全字段。"
+          },
+          {
+            "opt": "-S",
+            "semantics": "报告 swap 利用:kbswpfree、kbswpused、%swpused、kbswpcad(已 swapin 但 swap 区仍保留)、%swpcad。"
+          },
+          {
+            "opt": "-H",
+            "semantics": "报告 hugepages 利用:kbhugfree、kbhugused、%hugused、kbhugrsvd(reserved)、kbhugsurp(surplus)。"
+          },
+          {
+            "opt": "-W",
+            "semantics": "报告 swapping:pswpin/s、pswpout/s(每秒 swap 页 in/out)。"
+          },
+          {
+            "opt": "-q [keyword[,...]|ALL]",
+            "semantics": "系统 load 与 pressure-stall。keyword: CPU/IO/LOAD/MEM/PSI。MEM 给 %smem-10/60/300 与 %fmem-10/60/300 等 PSI 内存压力(部分任务/全部任务因等内存而 stall 的占比)。"
+          },
+          {
+            "opt": "-i interval",
+            "semantics": "采样间隔秒。"
+          },
+          {
+            "opt": "-o [filename]",
+            "semantics": "把数据存二进制文件供后续 -f 回放。无 filename 用标准 daily data file。"
+          },
+          {
+            "opt": "-f [filename]",
+            "semantics": "从数据文件(默认 daily data)回放历史数据。"
+          },
+          {
+            "opt": "-s [start_time] -e [end_time]",
+            "semantics": "时间窗过滤(配合 -f)。"
+          }
+        ],
+        "when_to_use": "reclaim-pressure(rule R1):sar -B 看 pgscank/pgsteal 比,sar -W 看 pswpin/pswpout 是否 swap 抖动;fragmentation(rule R2):sar -B 间接看 majflt 是否高;dirty-writeback(rule R3):sar -r ALL 看 kbdirty 趋势判脏页堆积;oom-policy:sar -q MEM 看 PSI %fmem(全任务 stall)预警 OOM 前兆。thp-hugepage:sar -H 看 %hugused、kbhugsurp 判断 hugepage 池是否被 surplus 借用。numa-locality:sar 无直接 per-node 字段,需 numastat 补。最大价值在 -o 落盘后 -f 回放做故障后分析(其他工具只能实时)。",
+        "kernel_alternative": "vmstat_refresh(互补:sar -B 数据同样来自 per-CPU 计数,读滞后受 stat_interval 影响)、sysctl_compaction_proactiveness(互补:sar -B 看 majflt 不直接反映 compact_stall,需 vmstat -s 补)、sysctl_vm_numa_stat(互补:sar 无 per-node 视角,NUMA 看用 numastat)、memory_reclaim(互补:sar 是观察,memory.reclaim 是触发回收)",
+        "caveats": "MAN 原文:需 sysstat 包安装与 sadc 守护进程跑(无 sadc 时 sar 仅能看实时无法落盘)。interval=0 时显示自启动平均。日常 daily data 由 /etc/cron.d/sysstat 收集。"
+      },
+      {
+        "tool": "slabtop",
+        "function": "实时显示内核 slab 缓存信息(按排序准则列 top 缓存,含统计头)。数据来自 /proc/slabinfo。",
+        "key_options": [
+          {
+            "opt": "-s, --sort=S",
+            "semantics": "按 S 排序。S 取值:a=active objects,b=objects/slab,c=cache size,l=slabs 数,v=active slabs,n=name,o=objects 数(默认),p=pages/slab,s=obj size,u=utilization。"
+          },
+          {
+            "opt": "-o, --once",
+            "semantics": "输出一次后退出(不循环)。脚本友好。"
+          },
+          {
+            "opt": "-d, --delay=N",
+            "semantics": "每 N 秒刷新(默认 3)。不能与 -o 合用。"
+          }
+        ],
+        "when_to_use": "reclaim-pressure(rule R1):slab 占用高(kbslab via sar -r 或 /proc/meminfo 的 Slab)时用 slabtop 看哪个 slab 吃最多——dentry/inode 等(可回收)vs kmalloc-*(不可回收);numa-locality:sar -r 看 kbslab 后用 slabtop 定位大头 slab 决定是否调 min_slab_ratio 触发 slab shrink。dirty-writeback/thp 等不直接用 slabtop。",
+        "kernel_alternative": "sysctl_min_slab_ratio(互补:sar -r 看 kbslab 占比超 min_slab_ratio 才触发 node_reclaim slab shrink,slabtop 是定位哪个 slab 的工具)、defrag_mode/sysctl_compaction_proactiveness(无直接关联,slab 不属外部碎片范畴)",
+        "caveats": "MAN 原文:statistic header 跟踪 slab 用了多少字节,不是物理内存测度;/proc/meminfo 的 Slab 字段才是 slab 物理内存。CACHE SIZE 列是上限非精确值——slub 在高压下有 slab order fallback,pages per slab 会变。需 2.4+ 内核(/proc/slabinfo v1.1+)。需对 /proc/slabinfo 读权限(可能受限)。"
+      },
+      {
+        "tool": "numastat",
+        "function": "显示 per-NUMA-node 内存统计(系统级 hit/miss 或 per-process 跨 node 分配)。无参数显示 numa_hit/numa_miss/numa_foreign/interleave_hit/local_node/other_node(单位:页)。",
+        "key_options": [
+          {
+            "opt": "(无参数)",
+            "semantics": "显示默认 per-node NUMA hit/miss 系统统计(单位:页,与 Andi Kleen 原 perl 脚本兼容)。"
+          },
+          {
+            "opt": "-m",
+            "semantics": "显示 meminfo 风格 per-node 系统级内存使用(类似 /proc/meminfo 但按 node 拆)。"
+          },
+          {
+            "opt": "-n",
+            "semantics": "显示原 numastat 统计但单位为 MB,格式与默认略异。"
+          },
+          {
+            "opt": "-p <PID> | <pattern>",
+            "semantics": "显示指定 PID 或进程名 pattern 的 per-node 内存分配。pattern 非纯数字时按命令行匹配(如 -p qemu)。"
+          },
+          {
+            "opt": "-c",
+            "semantics": "动态缩列宽,金额四舍五入到 MB(多 NUMA 节点机器友好)。"
+          },
+          {
+            "opt": "-s[<node>]",
+            "semantics": "降序排序。无 node 按 total 列排;有 node 按该 node 列排(如 -s2,无空格)。必须是复合选项串最后一个。"
+          },
+          {
+            "opt": "-z",
+            "semantics": "跳过全零行/列(多 node 系统减噪)。注意全零显示可能因有值被四舍五入为 0。"
+          },
+          {
+            "opt": "-v",
+            "semantics": "多进程时显示每进程详细(默认只显示 total 行)。"
+          }
+        ],
+        "when_to_use": "numa-locality(对应 capability):无参数看 numa_miss/numa_foreign 比例判局部性(对应 thresholds.numa_remote_ratio);-p <PID> 看目标任务跨 node 分布是否失衡;配合 /proc/<pid>/numa_maps(readonly)做 VMA 级定位。-m 看 per-node MemFree/MemUsed 判断是否某 node 已耗尽触发跨 node fallback。numa-locality 的 candidate_levers node_reclaim_mode/numa_zonelist_order 调参前先用 numastat -m 量化问题。",
+        "kernel_alternative": "node_reclaim_mode(互补:numastat 看 numa_miss 高→考虑开 zone_reclaim 本地回收)、numa_zonelist_order(互补:numastat -m 看 per-node 余量判断 Node/Zone 模式选哪个)、sysctl_vm_numa_stat(互补:numastat 默认数据来源含 numa_hint_faults 计数,关后停止累计)、sysctl_min_unmapped_ratio/sysctl_min_slab_ratio(互补:决定 node_reclaim 是否触发,数据由 numastat -m 辅助判)、setup_numabalancing(boot-only no runtime:NUMA balancing 扫描开关,numastat 是其效果度量)",
+        "caveats": "MAN 原文:数据来自 /proc/*/numa_maps 与 /sys/devices/system/node/node*/{meminfo,numastat}。终端宽度默认 80,可用 resize 动态调或 NUMASTAT_WIDTH 环境变量强制。非 tty 输出会很长(取决于 NUMA 节点数)。-c -z 组合在多 node 系统大幅减噪。"
+      },
+      {
+        "tool": "swapon",
+        "function": "启用设备/文件作 swap paging 区域。系统启动脚本调用使所有 swap 设备可用,跨设备交错 paging。",
+        "key_options": [
+          {
+            "opt": "-a, --all",
+            "semantics": "启用 /etc/fstab 中所有 swap 项,跳过 noauto 与已在用的。"
+          },
+          {
+            "opt": "-p, --priority priority",
+            "semantics": "设 swap 设备优先级(0-32767,大=高优先)。无则内核默认负数。fstab 用 pri=value。"
+          },
+          {
+            "opt": "-L label / -U uuid",
+            "semantics": "按 label/uuid 指定设备(需 /proc/partitions)。"
+          },
+          {
+            "opt": "-d, --discard[=policy]",
+            "semantics": "启用 swap discards(SSD)。--discard=once 整区一次性 discard;--discard=pages 异步回收页 discard;无 policy 默认两者都开。"
+          },
+          {
+            "opt": "-o, --options opts",
+            "semantics": "fstab 兼容逗号串(如 pri=1,discard=pages,nofail),最后评估并覆盖其他命令行选项。"
+          },
+          {
+            "opt": "-e, --ifexists",
+            "semantics": "静默跳过不存在设备(等价 fstab 的 nofail)。"
+          },
+          {
+            "opt": "-f, --fixpgsz",
+            "semantics": "页大小不匹配当前内核时重跑 mkswap 初始化(mkswap 不查坏块)。"
+          },
+          {
+            "opt": "-s, --summary",
+            "semantics": "显示 swap 使用汇总(等价 cat /proc/swaps)。DEPRECATED,改用 --show。"
+          },
+          {
+            "opt": "--show[=column...]",
+            "semantics": "可定义表显示 swap 区列。--output-all 全列。"
+          },
+          {
+            "opt": "-T, --fstab path",
+            "semantics": "指定替代 fstab 文件(若目录则按 strverscmp 排序,跳 . 开头/无 .fstab 后缀的)。多次可指定。"
+          }
+        ],
+        "when_to_use": "reclaim-pressure(rule R1):当 swappiness 调大倾向 swap anon 时,确认有 swap 设备在用(swapon --show);无 swap 则 swappiness 无意义。oom-policy:确保 swap 总量配 ram 满足 CommitLimit。dirty-writeback 不直接相关。cgroup-memory:swap.max/swap.high 限额前先用 swapon --show 看 swap 总量。系统初始化阶段 swapon -a 启用全部。",
+        "kernel_alternative": "vm_swappiness(互补:swappiness 倾向 swap anon 的前提是 swap 已 swapon 启用,无 swap 时 swappiness 调大无意义)、sysctl_overcommit_memory/sysctl_overcommit_ratio(互补:CommitLimit = swap + ram*ratio,swap 总量由 swapon 决定)、swap_max_write/swap_high_write(互补:cgroup swap 限额基于已 swapon 的 swap 总量做子集限制)、page_cluster(swapin 预读页数,与 swapon 无直接关系但影响 swapin 性能)",
+        "caveats": "MAN 原文:swap 文件实现要求内核能直接写文件不经 fs 协助,故带 holes 或 Btrfs CoW 文件会被拒。cp/truncate 创建的带 hole 文件会被拒;fallocate 预分配的视 fs 而定(XFS 自 4.18 支持)。Btrfs swap 文件需 nocow 属性(自 5.0)。NFS swap 可能不工作。swapon 自动检测并改写带旧软件挂起数据的签名防数据损坏。"
+      },
+      {
+        "tool": "swapoff",
+        "function": "禁用指定设备/文件的 swap。-a 禁用 /proc/swaps 与 /etc/fstab 中所有 swap。",
+        "key_options": [
+          {
+            "opt": "-a, --all",
+            "semantics": "禁用所有已知 swap(/proc/swaps 或 /etc/fstab)。返回值:0 全成功,32 全失败,64 部分成功。"
+          },
+          {
+            "opt": "-v, --verbose",
+            "semantics": "详尽输出。"
+          },
+          {
+            "opt": "(无选项) specialfile",
+            "semantics": "禁用指定 specialfile 的 swap。"
+          }
+        ],
+        "when_to_use": "reclaim-pressure(rule R1):swap IO 太高想强制保 anon 时,先 swapoff 关 swap 触发 swapin(注意会卡);调试 swappiness=0 时确认无 swap 残留。oom-policy:确保 swap 关闭后 CommitLimit = ram*ratio(overcommit NEVER 下)。dirty-writeback:swapoff 触发 swapin 会产生 IO 与 dirty page,注意别在承载业务瞬间做。cgroup-memory:swap.max 限额前若想彻底关 swap,swapoff -a。",
+        "kernel_alternative": "vm_swappiness(互补:swappiness=0 仍可能 swap,要彻底关 swap 用 swapoff)、sysctl_overcommit_memory/sysctl_overcommit_ratio(互补:overcommit NEVER 下 CommitLimit = swap + ram*ratio,swapoff 后 CommitLimit 缩小,慎用)、swap_max_write/swap_high_write(互补:cgroup 级 swap 限额可在不 swapoff 系统的情况下对子组限 swap)",
+        "caveats": "MAN 原文:swapoff 失败退出码自 v2.36:0=成功,2=内存不足停 swap(OOM),4=其他 swapoff(2) 失败,8=非 swapoff syscall 系统错,16=语法错,32=--all 全失败,64=--all 部分成功。swapoff 强制 swapin 所有页,内存不足会失败返回 2。swap 文件带 hole/CoW 不支持(见 swapon caveats)。"
+      },
+      {
+        "tool": "sysctl",
+        "function": "运行时读写内核参数(/proc/sys/ 下)。可读单变量、设单变量、从文件批量加载、列所有。",
+        "key_options": [
+          {
+            "opt": "variable",
+            "semantics": "读变量值(如 sysctl vm.swappiness)。'/' 也接受作 '.' 分隔。"
+          },
+          {
+            "opt": "variable=value",
+            "semantics": "设变量(如 sysctl vm.swappiness=10)。值含 shell 解析字符需引号。"
+          },
+          {
+            "opt": "-w, --write",
+            "semantics": "强制所有参数当写参数,无法解析则报错。"
+          },
+          {
+            "opt": "-p[FILE], --load[=FILE]",
+            "semantics": "从文件加载设置,无 FILE 用 /etc/sysctl.conf。'-' 表 stdin。FILE 可正则。"
+          },
+          {
+            "opt": "--system",
+            "semantics": "从所有系统配置文件加载(按 /etc/sysctl.d > /run/sysctl.d > /usr/local/lib/sysctl.d > /usr/lib/sysctl.d > /lib/sysctl.d > /etc/sysctl.conf 顺序)。"
+          },
+          {
+            "opt": "-a, --all",
+            "semantics": "列所有当前可用值(除 deprecated/verboten)。"
+          },
+          {
+            "opt": "-r, --pattern pattern",
+            "semantics": "只应用匹配 extended regex 的设置。"
+          },
+          {
+            "opt": "-n, --values",
+            "semantics": "打印值时不打印键名。"
+          },
+          {
+            "opt": "-e, --ignore",
+            "semantics": "忽略未知键错误。"
+          },
+          {
+            "opt": "-N, --names",
+            "semantics": "只打印键名(便于 shell 补全)。"
+          },
+          {
+            "opt": "-q, --quiet",
+            "semantics": "不显示设的值到 stdout。"
+          },
+          {
+            "opt": "--deprecated",
+            "semantics": "--all 时包含 deprecated 参数。"
+          }
+        ],
+        "when_to_use": "全域通用:vm_swappiness/vm_dirty_ratio/watermark_scale_factor/node_reclaim_mode/sysctl_overcommit_memory/sysctl_panic_on_oom 等大部分 vm.* tunable 都用 sysctl 设。对应 rule R1/R2/R3/R4/R5 调参阶段(R5 thp-hugepage 的 transparent_hugepage cmdline 是 boot-only,但 /sys/kernel/mm/transparent_hugepage/enabled 运行时 sysctl 路径可改;nr_hugepages/nr_overcommit_hugepages/hugetlb_optimize_vmemmap 也是 sysctl 可改)。注意 mm 中 cmdline/early-param 类(setup_transparent_hugepage/setup_numabalancing/hugepage_alloc_threads_setup/set_hashdist/setup_slab_nomerge 等)是 boot-only,sysctl 改无效。laptop_mode 已废弃 sysctl 改仅 pr_warn。",
+        "kernel_alternative": "vm_swappiness/vm_dirty_ratio/dirty_background_ratio/watermark_scale_factor/watermark_boost_factor/min_free_kbytes/sysctl_lowmem_reserve_ratio/node_reclaim_mode/numa_zonelist_order/sysctl_min_unmapped_ratio/sysctl_min_slab_ratio/sysctl_overcommit_memory/sysctl_overcommit_ratio/sysctl_overcommit_kbytes/sysctl_panic_on_oom/sysctl_oom_kill_allocating_task/sysctl_oom_dump_tasks/sysctl_user_reserve_kbytes/sysctl_admin_reserve_kbytes/sysctl_compaction_proactiveness/sysctl_extfrag_threshold/sysctl_compact_unevictable_allowed/sysctl_compact_memory/defrag_mode/sysctl_max_map_count/sysctl_vm_numa_stat/sysctl_stat_interval/page_cluster/sysctl_hugetlb_shm_group/hugetlb_sysctl_handler/hugetlb_overcommit_handler/vmemmap_optimize_enabled/sysctl_memory_failure_early_kill/sysctl_memory_failure_recovery/sysctl_enable_soft_offline/randomize_va_space 等——sysctl 是这些 tunable 的用户态入口",
+        "caveats": "MAN 原文:需 procfs。改 /proc/sys/vm/* 大多需 root。--system 与 -p 按目录顺序加载,后加载覆盖先加载。boot-only 参数(如 transparent_hugepage cmdline)sysctl 无对应路径或改无效。laptop_mode 已废弃改无效。boot-only 与 deprecated 在 mm/interactions 中已标注。"
+      },
+      {
+        "tool": "systemd-run",
+        "function": "在临时 .scope 或 .service 单元中跑命令;通过 --property= 设 cgroup v2 内存资源控制(MemoryMin=/MemoryLow=/MemoryHigh=/MemoryMax=/MemorySwapMax=/MemoryZSwapMax=/MemoryZSwapWriteback=/OOMScoreAdjust=/OOMPolicy=/AllowedMemoryNodes= 等)。是 cgroup v2 unified 上现代推荐方式,替代 cgcreate/cgset/cgexec。",
+        "key_options": [
+          {
+            "opt": "--scope",
+            "semantics": "建临时 .scope 而非默认 .service;由 systemd-run 自己作父进程,继承调用者环境;同步执行(等命令结束)。"
+          },
+          {
+            "opt": "--service-type=",
+            "semantics": "设服务类型(见 systemd.service Type=)。默认 simple。--scope 下无效。建议 --service-type=exec 确保命令真正启动才返回。"
+          },
+          {
+            "opt": "-p, --property=",
+            "semantics": "设 scope/service 单元属性,格式同 systemctl set-property。mm 相关:MemoryMin=(等价 memory.min 软下限)、MemoryLow=(等价 memory.low 软保护)、MemoryHigh=(等价 memory.high 软上限,超则同步回收限速)、MemoryMax=(等价 memory.max 硬上限,超则 OOM)、MemorySwapMax=(等价 swap.max)、MemoryZSwapMax=(等价 zswap.max)、MemoryZSwapWriteback=(boolean 等价 zswap.writeback)、OOMScoreAdjust=(-1000..1000 等价 /proc/<pid>/oom_score_adj)、OOMPolicy=(continue/stop/kill,kill 时设 memory.oom.group=1)、AllowedMemoryNodes=(NUMA 内存节点限制,等价 cpuset.mems)。详见 systemd.resource-control(5)。"
+          },
+          {
+            "opt": "--slice=",
+            "semantics": "把新单元放入指定 slice(而非 system.slice / 用户 root slice)。"
+          },
+          {
+            "opt": "--slice-inherit",
+            "semantics": "把新单元放入 systemd-run 自身所在 slice(可与 --slice= 组合为子 slice)。"
+          },
+          {
+            "opt": "-r, --remain-after-exit",
+            "semantics": "服务进程退出后保留单元直到显式停止(便于收集 memory.current/events 等运行时信息)。"
+          },
+          {
+            "opt": "-G, --collect",
+            "semantics": "完成后卸载单元(无论成功失败),等价 --property=CollectMode=inactive-or-failed。"
+          },
+          {
+            "opt": "--user",
+            "semantics": "对调用者的 service manager 而非系统 service manager。"
+          },
+          {
+            "opt": "--wait",
+            "semantics": "同步等待服务结束并显示运行时/CPU/内存/IO 计费信息。不可与 --scope/--no-block 合用。"
+          },
+          {
+            "opt": "--no-block",
+            "semantics": "不同步等启动完成,仅验证并入队。不可与 --wait 合用。"
+          }
+        ],
+        "when_to_use": "cgroup-memory(rule R4-cgroup-memory-triggered):用 MemoryHigh= 设软上限(超则同步回收限速,等价 memory.high,是主推荐)、MemoryMax= 设硬上限(超则 OOM,最后防线)、MemoryMin=/MemoryLow= 设软保护、MemorySwapMax=/MemoryZSwapMax= 限 swap/zswap、AllowedMemoryNodes= 限 NUMA 内存节点;oom-policy:用 OOMPolicy=kill 等价 memory.oom.group=1 整组杀、OOMScoreAdjust= 给关键进程降权避免被杀;numa-locality:用 AllowedMemoryNodes= 把 cgroup 限到指定 NUMA 节点。rule R4 的 cgroup 落地手段。",
+        "kernel_alternative": "memory_min_write(MemoryMin= 入口)、memory_low_write(MemoryLow= 入口)、memory_high_write(MemoryHigh= 入口)、memory_max_write(MemoryMax= 入口)、memory_oom_group_write(OOMPolicy=kill 入口,设 memory.oom.group=1)、swap_max_write(MemorySwapMax= 入口)、swap_high_write(互补:cgroup v2 swap.high 在 systemd 无直接属性,可改用 systemctl set-property 或直接写 cgroupfs)、zswap_max_write(MemoryZSwapMax= 入口)、zswap_writeback_write(MemoryZSwapWriteback= 入口)、memory_reclaim(互补:systemd-run 无对应触发属性,直接写 memory.reclaim)、setup_numabalancing(boot-only no runtime:NUMA balancing 扫描开关,AllowedMemoryNodes= 是 cgroup 级运行时等价限制内存节点)",
+        "caveats": "MAN 原文:默认 Type=simple,manager 在 fork 成功后即认为启动成功(execve 前就返回,命令可能没起来也算成功)——要确保命令真正启动用 --service-type=exec。$ 字符会被 manager 变量扩展,要禁用 --expand-environment=no(--scope 默认禁用)。--scope 与 --wait/--pty/--on-* 互斥。MemoryHigh=/MemoryMax= 等需内核 cgroup v2 unified hierarchy(本仓库 v7.2 默认)。MAN 原文 MemoryMax=:推荐用 MemoryHigh= 作主控、MemoryMax= 作最后防线。"
+      },
+      {
+        "tool": "cgcreate",
+        "function": "创建新 cgroup。libcgroup 工具。可用传统 cgroup v1 路径(默认走 systemd 委派层级)或 -c 创建 systemd scope(适配 v2 unified)。",
+        "key_options": [
+          {
+            "opt": "-g <controllers>:<path>",
+            "semantics": "定义要建的 cgroup。controllers 是控制器列表(逗号分隔),'*' = 所有已挂载控制器。path 是相对路径。可多次用建多个 cgroup。例:-g *:student memory:teacher。"
+          },
+          {
+            "opt": "-c, --scope",
+            "semantics": "建 systemd scope 而非传统 cgroup。-g 后路径必须是 <slice-name>.slice/<scope-name>.scope 形式。slice 不存在 systemd 自动建。libcgroup 在 scope 的 cgroup.procs 放一个 idle 进程(除非 -p)。适配 cgroup v2 unified hierarchy。"
+          },
+          {
+            "opt": "-p, --pid=pid",
+            "semantics": "把指定 pid 移入 -c 建的 scope。必须与 -c 合用。"
+          },
+          {
+            "opt": "-b",
+            "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根层级构造。直接写 cgroup 根(v1 风格)。"
+          },
+          {
+            "opt": "-S, --setdefault",
+            "semantics": "把 -c 建的 scope 设为 libcgroup 默认 scope。后续 libcgroup 工具用此 scope 拼 cgroup 路径。配合 -b 用。"
+          },
+          {
+            "opt": "-a <agid>:<auid>",
+            "semantics": "设 cgroup 控制文件(参数文件)的 user:group 拥有者。这些用户可设子系统参数与建子 cgroup。默认继承父 cgroup。"
+          },
+          {
+            "opt": "-t <tuid>:<tgid>",
+            "semantics": "设 tasks 文件的 user:group 拥有者。这些用户可把任务加入此 cgroup。默认继承父。"
+          },
+          {
+            "opt": "-f, --fperm=mode / -d, --dperm=mode / -s, --tperm=mode",
+            "semantics": "设控制文件/目录/tasks 文件权限(八进制如 775)。注意 -f/-s 的实际权限被当前 owner 权限作 umask(777 会把 group/other 权限设成 owner 的)。"
+          }
+        ],
+        "when_to_use": "cgroup-memory(rule R4):建 cgroup 给 memory.min/memory.low/memory.high/memory.max 落地(等价 systemd-run 但更底层、可批量建);oom-policy:建 cgroup 给 memory.oom.group 落地。-c 是 v7.2 cgroup v2 unified 上的推荐路径(走 systemd scope),-b 是 v1 风格直接写根。rule R4 的 cgroup 落地手段之一(替代 systemd-run,适合静态配置而非临时跑命令)。",
+        "kernel_alternative": "memory_min_write/memory_low_write/memory_high_write/memory_max_write(cgcreate 建 cgroup 后写 memory.{min,low,high,max})、memory_oom_group_write(建后写 memory.oom.group)、swap_max_write/swap_high_write/zswap_max_write/zswap_writeback_write(建后写 swap.{max,high}、zswap.{max,writeback})、cgroup_memory(boot-only no runtime:cgroup memory controller 是否编译入内核)、setup_swap_account(boot-only no runtime,已废弃:swap cgroup 控制改由 cgroupfs swap.* 文件)",
+        "caveats": "v7.2 cgroup v2 unified 默认上:传统 -g 不带 -c 走 systemd 委派层级(默认在 system.slice 或用户 root slice 下),要直接写根用 -b。需 root 建 cgroup。-c 的 scope 名必须严格 <slice>.slice/<scope>.scope 形式。权限 mode 用八进制。-f/-s 实际权限受 owner 当前权限 umask。CGROUP_LOGLEVEL 环境变量控日志(DEBUG/INFO/WARNING/ERROR)。配 /etc/cgconfig.conf 与 cgexec 配套用。"
+      },
+      {
+        "tool": "cgset",
+        "function": "设置已存在 cgroup 的参数(写控制文件)。libcgroup 工具。等价直接 echo > /sys/fs/cgroup/.../<file>。",
+        "key_options": [
+          {
+            "opt": "-r <name=value>",
+            "semantics": "定义要写的控制文件名与值。可多次用同时写多个参数。例:-r memory.max=2G student。"
+          },
+          {
+            "opt": "-b",
+            "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根构造。直接写根(v1 风格)。"
+          },
+          {
+            "opt": "--copy-from <source_cgroup_path>",
+            "semantics": "把源 cgroup 的所有参数复制到目标 cgroup。源/目标都可作为参数多次指定。"
+          },
+          {
+            "opt": "<cgroup_path> ...",
+            "semantics": "目标 cgroup 路径,可多次指定同时设多个 cgroup。"
+          }
+        ],
+        "when_to_use": "cgroup-memory(rule R4):改 cgroup 的 memory.{min,low,high,max}(等价 systemd-run --property= 但对已存在 cgroup 而非临时单元);oom-policy:改 memory.oom.group;numa-locality:改 cpuset.mems(若 cgroup 走 cpuset controller 限内存节点);reclaim-pressure:写 memory.reclaim 触发主动回收。rule R4 的 cgroup 参数修改手段之一。",
+        "kernel_alternative": "memory_min_write(cgset -r memory.min=N)、memory_low_write(-r memory.low=N)、memory_high_write(-r memory.high=N)、memory_max_write(-r memory.max=N)、memory_oom_group_write(-r memory.oom.group=1)、memory_reclaim(-r memory.reclaim=N 触发主动回收)、swap_max_write/swap_high_write(-r swap.max/swap.high=N)、zswap_max_write/zswap_writeback_write(-r zswap.max/zswap.writeback=N)、node_reclaim_mode(互补:全局 sysctl,cgset 是 cgroup 级 cpuset.mems)",
+        "caveats": "v7.2 cgroup v2 unified 上:控制文件名是 v2 风格(memory.min/memory.max/memory.high/memory.low/memory.reclaim/memory.oom.group/swap.max/swap.high/zswap.max/zswap.writeback),v1 风格名(memory.limit_in_bytes/memory.swappiness 等)在 v2 上不可写。-b 直接写根需 root。CGROUP_LOGLEVEL 环境变量控日志。等价直接 echo > 文件,cgset 只是批量+多 cgroup 同时设的便利层。改 cgroup 参数需对该 cgroup 控制文件有写权限(root 或 cgroup owner)。"
+      },
+      {
+        "tool": "cgexec",
+        "function": "在指定 cgroup 里跑命令。libcgroup 工具。等价 systemd-run --property= 但走 libcgroup/cgrules.conf 路径而非 systemd 单元。",
+        "key_options": [
+          {
+            "opt": "-g <controllers>:<path>",
+            "semantics": "指定命令在哪个 cgroup 跑。controllers 是控制器列表(逗号分隔),'*' = 所有已挂载。可多次用指定多个 cgroup。无 -g 时按 /etc/cgrules.conf 自动分配。"
+          },
+          {
+            "opt": "-b",
+            "semantics": "忽略默认 systemd 委派层级,路径相对 cgroup 根构造。直接写根(v1 风格)。"
+          },
+          {
+            "opt": "--sticky",
+            "semantics": "cgred daemon(cgrulesengd 进程)不修改命令及其子任务的 cgroup。无此选项时 daemon 不改主任务但会按 /etc/cgrules.conf 改子任务。"
+          },
+          {
+            "opt": "-r",
+            "semantics": "替换 systemd scope 的 idle 进程为任务命令(配合 -c scope 用,见 cgcreate -c)。"
+          },
+          {
+            "opt": "command [arguments]",
+            "semantics": "要跑的命令与参数。"
+          }
+        ],
+        "when_to_use": "cgroup-memory(rule R4):把命令直接跑在指定 cgroup(等价 cgcreate+cgset+exec 但一步到位);oom-policy:把任务跑在 oom.group=1 的 cgroup;numa-locality:把任务跑在 cpuset.mems 限定的 cgroup(限内存节点)。rule R4 的 cgroup 落地手段之一(适合一次性命令,长期服务用 systemd-run)。无 -g 时按 /etc/cgrules.conf 自动分配(需先配 cgrulesengd daemon)。",
+        "kernel_alternative": "memory_max_write/memory_high_write/memory_min_write/memory_low_write(cgroup 已建并 memory.{max,high,min,low} 已设,cgexec -g 把任务加入)、swap_max_write/swap_high_write/zswap_max_write(zswap.writeback 已设的 cgroup)、memory_oom_group_write(oom.group 已设的 cgroup)、memory_reclaim(互补:cgexec 是把任务放进限额组,memory.reclaim 是触发该组主动回收)、setup_swap_account(boot-only no runtime,已废弃:swap cgroup 改由 cgroupfs)",
+        "caveats": "v7.2 cgroup v2 unified 上:cgroup 路径需 v2 风格。-g 路径不存在会按 /etc/cgconfig.conf spec 建(无 spec 用内核默认值)。--sticky 仅在 cgrulesengd daemon 运行时有效。libcgroup 已通过 -b 直接写根或走 cgrules.conf 部分适配 v2。CGROUP_LOGLEVEL 环境变量控日志。优先考虑 systemd-run(现代推荐,cgcreate man 自己也提 -c scope 替代)。"
+      },
+      {
+        "tool": "lscgroup",
+        "function": "列所有 cgroup 或指定 cgroup 的子组。libcgroup 工具。",
+        "key_options": [
+          {
+            "opt": "-g <controllers>:<path> (或无选项位置参数)",
+            "semantics": "列指定控制器+路径下的子 cgroup。无此参数时列所有层级所有 cgroup。例:-g memory:/ 列含 memory 控制器的所有 cgroup;-g memory:/student 列 memory:/student 下的子组。"
+          },
+          {
+            "opt": "(无)",
+            "semantics": "无 -g 时列所有层级所有 cgroup。"
+          }
+        ],
+        "when_to_use": "cgroup-memory(rule R4 验证阶段):列出已建 cgroup 看 memory.max/memory.high 配置(配合 cgget 读参数);oom-policy:看哪些 cgroup 设了 oom.group。rule R4 验证 cgroup 是否真的建好。man 原文 'lscgroup is currently supported on cgroups v1 only'——v7.2 cgroup v2 unified 上不可用,改用 systemd-cgls 或 ls /sys/fs/cgroup/。",
+        "kernel_alternative": "(无,纯观察工具;对应 readonly 是 /sys/fs/cgroup 树与 memory_events_show/memory_current_read)",
+        "caveats": "man 原文明确 'lscgroup is currently supported on cgroups v1 only'。v7.2 cgroup v2 unified hierarchy 默认上不可用——改用 systemd-cgls(列 systemd 单元对应的 cgroup)或直接 ls /sys/fs/cgroup/ 替代。CGROUP_LOGLEVEL 环境变量控日志。lscgroup 是 v1 时代工具,v2 上属 deprecated。"
+      }
+    ]
+  },
   "rules": [
     {
       "id": "R1-reclaim-low-efficiency",

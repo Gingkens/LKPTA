@@ -1,0 +1,143 @@
+{
+  "module": "schema",
+  "description": "系统维护者维护的 knowledge 结构定义权威源。tunable.json / readonly.json / summary.json 的每个 key 含义、必填性、类型、合法值都在此。生产者照此填写,verify.py 据此校验。内核领域术语(EEVDF/PELT 等)不在此,见 vocab.json。本文件跨版本稳定(字段定义不随内核版本变),不带版本号;内核术语 terms 在 vocab.json 跨版本累积。",
+  "consumes_format": {
+    "pattern": "^<file_path>:<symbol>$",
+    "desc": "格式「文件路径:符号」,符号=函数名/数组名/宏名,跨版本稳定。禁止 file:行号(行号跨版本漂移)、禁止裸文件路径(无符号消费者无法定位)、禁止 file:struct->field(非稳定符号)、禁止 file:symbol (annotation)(冒号后须纯符号名)。例:kernel/sched/fair.c:update_deadline。最多 5 条。可选字段,无消费点就不填。",
+    "example": "kernel/sched/fair.c:update_deadline"
+  },
+  "fields": {
+    "tunable": {
+      "name": {
+        "required": true,
+        "type": "string",
+        "desc": "userspace 名,用户态路径的叶子名。给用户的命令里写这个。同名不同路径的参数靠 path 全路径区分,不合并。"
+      },
+      "kernel_name": {
+        "required": true,
+        "type": "string",
+        "desc": "稳定标识,跨版本追踪用;query.py 按它查。通常是 C 变量名/宏名/结构体成员路径(如 sysctl_sched_migration_cost、sd->level)。"
+      },
+      "path": {
+        "required": true,
+        "type": "string",
+        "desc": "完整用户态路径,占位符(cpuN/domainN/<pid>/<name>/<irqN>)保留模板形式,实际给建议时代入。同名不同路径各占一条,靠 path 全路径唯一区分。"
+      },
+      "category": {
+        "required": true,
+        "type": "string",
+        "enum": ["tunable", "readonly"],
+        "desc": "tunable=可写可调;readonly=只读观测。和文件分流一致(summary.json 里也带)。"
+      },
+      "gate": {
+        "required": true,
+        "type": "string",
+        "desc": "CONFIG 依赖。空串=无条件存在;有值=空格分隔的 CONFIG_*(全部满足才编译,AND 关系)。消费者据此判断目标系统是否编译了该参数,必须准确。arch-internal 宏(HAVE_ARCH_*/__ARCH_*)不进 gate,在 version_notes 注明。"
+      },
+      "unit": {
+        "required": true,
+        "type": "string",
+        "desc": "单位。按参数类型填:数值型用 ns/us/ms/s(时间)、kB/MB/bytes/pages(内存大小)、%(0~100 百分比)、ratio(0~1 或 0~N 比值,summary 注明分母)、count(整数计数)、bits/bitmap(位图)、jiffies/centisec(内核时间,version_notes 注明换算)、gid/uid(用户/组ID);布尔开关填 bool;boot cmdline 参数填 cmdline;枚举字符串填 enum:<候选|竖线分隔>如 enum:none|voluntary|full|lazy;写值触发动作非单调调参填 trigger;非调参接口填 interface;已废弃改无效填 deprecated。无 canonical 对应的(如速率 MB/s、写入格式串)如实填自定义串并在 version_notes 标注『非标准单位』。"
+      },
+      "default": {
+        "required": true,
+        "type": "number|string",
+        "desc": "默认值,从当前版本源码核对(不照抄旧 knowledge)。数值型写数字;布尔写 true/false;cmdline/trigger/interface 写『未指定』或『无』;格式串如实填。依赖 CONFIG_* 或定义在别处的要 grep 准。"
+      },
+      "range": {
+        "required": true,
+        "type": "object|null",
+        "desc": "合法范围。对象格式 {min,max,special}。sysctl 从 ctl_table 的 .extra1/.extra2 读;debugfs/sysfs 看写回调校验。源码无显式约束时写 {}(空对象,表示『源码未约束』),不能省略字段。special 存特殊语义值如 {\"0\":\"禁用\",\"-1\":\"强制\"}。非数值参数(bool/cmdline/trigger/interface/deprecated)可省略或 {}。"
+      },
+      "summary": {
+        "required": true,
+        "type": "string",
+        "desc": "一句话说清参数是什么。summary.json 里也带这条,消费者先扫它决定看哪些参数。遇到内核术语须在 vocab.json 有定义。"
+      },
+      "increasing": {
+        "required": true,
+        "type": "object",
+        "desc": "调大时的效果。含 good_for[](调大得到的好处,动词+方向,禁裸名词)和 bad_for[](调大引发的真实代价,非 good_for 反义词镜像)。消费者据此判断该不该调大。非单调参数(trigger/interface/deprecated)填 {good_for:[\"(无单调性,触发动作)\"],bad_for:[]};布尔开关 increasing=启用。"
+      },
+      "decreasing": {
+        "required": true,
+        "type": "object",
+        "desc": "调小时的效果。结构同 increasing。good_for=调小的好处,bad_for=调小的真实代价。非单调参数同上填无单调性说明;布尔开关 decreasing=禁用。"
+      },
+      "when_to_increase": {
+        "required": true,
+        "type": "array",
+        "desc": "什么症状/目标时该调大(actionable)。消费者的行动入口——看到症状直接对号入座定方向,不用从效果反推。写症状(如『cache 命中率低』),禁结果状态名词(如『cache 局部性』)。非单调参数仍填该触发的使用场景。"
+      },
+      "when_to_decrease": {
+        "required": true,
+        "type": "array",
+        "desc": "什么症状/目标时该调小。同 when_to_increase 约定。"
+      },
+      "consumes": {
+        "required": false,
+        "type": "array",
+        "desc": "该变量在内核被消费的位置,grep kernel_name 全仓的主要命中点,≤5 条。格式见 consumes_format(file:符号)。帮消费者理解调参影响面、定位代码。无消费点可不填。"
+      },
+      "version_notes": {
+        "required": false,
+        "type": "string",
+        "desc": "该参数在本版本的特殊说明。默认值/语义/存在性的版本敏感点、非标准单位说明、arch 宏依赖、文档示例有误纠正都写这里。"
+      },
+      "boot_only": {
+        "required": false,
+        "type": "bool",
+        "desc": "true=该参数只能 boot cmdline 设置(运行时不可改,需 reboot)。消费者给建议时提示『改 grub/重启』而非 echo。从 mechanism=__setup 且非运行时可改判定。"
+      },
+      "deprecated": {
+        "required": false,
+        "type": "bool",
+        "desc": "true=该参数在当前内核已废弃(handler 仅 pr_warn/改无效)。消费者据此过滤,别建议用户调它。从 unit:deprecated 或源码确认。"
+      },
+      "per_cpu": {
+        "required": false,
+        "type": "bool",
+        "desc": "true=该参数 per-CPU,path 含 cpuN 占位符。消费者需遍历或抽样代表 CPU。出现即提示 per-cpu 性质。"
+      },
+      "per_domain": {
+        "required": false,
+        "type": "bool",
+        "desc": "true=该参数 per-调度域,path 含 domainN 占位符。消费者需遍历该 CPU 下所有 domainN。"
+      },
+      "per_cgroup": {
+        "required": false,
+        "type": "bool",
+        "desc": "true=该参数 per-cgroup,path 含 <name> 占位符或位于 cgroup 子树。消费者取目标 cgroup 路径代入。"
+      },
+      "per_pid": {
+        "required": false,
+        "type": "bool",
+        "desc": "true=该参数 per-process,path 含 <pid> 占位符。消费者选代表进程 PID 代入。"
+      },
+      "per_irq": {
+        "required": false,
+        "type": "bool",
+        "desc": "true=该参数 per-IRQ,path 含 <irqN> 或 /proc/irq/<N> 占位符。消费者按目标中断号代入。"
+      }
+    },
+    "readonly": {
+      "name": { "required": true, "type": "string", "desc": "同 tunable.name。" },
+      "kernel_name": { "required": true, "type": "string", "desc": "同 tunable.kernel_name。" },
+      "path": { "required": true, "type": "string", "desc": "同 tunable.path。readonly 多为 per-cpu/per-domain/per-irq 路径。" },
+      "category": { "required": true, "type": "string", "enum": ["tunable", "readonly"], "desc": "固定 readonly。" },
+      "gate": { "required": true, "type": "string", "desc": "同 tunable.gate。readonly 项也要过 gate,否则诊断无据。" },
+      "summary": { "required": true, "type": "string", "desc": "同 tunable.summary。" },
+      "use": { "required": true, "type": "string", "desc": "怎么用来诊断——读哪个值、怎么判读。readonly 项用 use 替代 tunable 的 increasing/decreasing/when_to_*。消费者据此把只读值转成诊断依据。" },
+      "per_cpu": { "required": false, "type": "bool", "desc": "同 tunable.per_cpu。" },
+      "per_domain": { "required": false, "type": "bool", "desc": "同 tunable.per_domain。" },
+      "per_cgroup": { "required": false, "type": "bool", "desc": "同 tunable.per_cgroup。" },
+      "per_pid": { "required": false, "type": "bool", "desc": "同 tunable.per_pid。" },
+      "per_irq": { "required": false, "type": "bool", "desc": "同 tunable.per_irq。" }
+    },
+    "summary": {
+      "kernel_name": { "required": true, "type": "string", "desc": "同 tunable.kernel_name。跨表关联 tunable/readonly 的主键。" },
+      "category": { "required": true, "type": "string", "enum": ["tunable", "readonly"], "desc": "同 tunable.category。" },
+      "summary": { "required": true, "type": "string", "desc": "同 tunable.summary。summary.json 每条只这 3 字段,消费者先扫它。" }
+    }
+  }
+}

@@ -5,82 +5,74 @@
     {
       "mechanism": "register_sysctl_init",
       "locator": "net/core/sysctl_net_core.c:sysctl_core_init",
-      "filter": { "table": "net_core_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/net/core"
+      "path_prefix": "/proc/sys/net/core",
+      "table": "net_core_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "net/ipv4/sysctl_net_ipv4.c:sysctl_ipv4_init",
-      "filter": { "table": "ipv4_table" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/net/ipv4"
+      "path_prefix": "/proc/sys/net/ipv4",
+      "table": "ipv4_table"
     },
     {
       "mechanism": "register_sysctl_init",
       "locator": "net/ipv6/sysctl_net_ipv6.c:ipv6_sysctl_net_init",
-      "filter": { "table": "ipv6_table_template" },
       "interface": "sysctl",
-      "path_prefix": "/proc/sys/net/ipv6"
+      "path_prefix": "/proc/sys/net/ipv6",
+      "table": "ipv6_table_template"
     },
-
     {
       "mechanism": "cftype",
       "locator": "net/core/netclassid_cgroup.c:net_cls_cgrp_subsys",
-      "filter": {
-        "cftype_array": "ss_files",
-        "cftype_locator": "net/core/netclassid_cgroup.c:ss_files",
-        "binding": "legacy_cftypes",
-        "subsys": "net_cls_cgrp_subsys",
-        "name": ["classid"],
-        "config": ["CONFIG_CGROUP_NET_CLASSID"]
-      },
       "interface": "cgroup",
-      "path_prefix": "/sys/fs/cgroup/net_cls.<name>"
+      "path_prefix": "/sys/fs/cgroup/net_cls.<name>",
+      "filter": {"cftype_locator": "net/core/netclassid_cgroup.c:ss_files"},
+      "names": ["classid"],
+      "config": ["CONFIG_CGROUP_NET_CLASSID"]
     },
-
     {
       "mechanism": "proc_create_seq",
       "locator": "net/core/net-procfs.c:dev_proc_net_init",
-      "filter": { "name": ["softnet_stat"] },
       "interface": "proc",
-      "path_prefix": "/proc/net"
+      "path_prefix": "/proc/net",
+      "names": ["softnet_stat"]
     },
-
     {
       "mechanism": "__setup",
       "locator": "net/core/sysctl_net_core.c:fb_tunnels_only_for_init_net_sysctl_setup",
-      "filter": { "param": "fb_tunnels" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "fb_tunnels"
     },
     {
       "mechanism": "__setup",
       "locator": "net/ipv4/tcp_metrics.c:set_tcpmhash_entries",
-      "filter": { "param": "tcpmhash_entries" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "tcpmhash_entries"
     },
     {
       "mechanism": "__setup",
       "locator": "net/ipv4/udp.c:set_uhash_entries",
-      "filter": { "param": "uhash_entries" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "uhash_entries"
     },
     {
       "mechanism": "__setup",
       "locator": "net/ipv4/tcp.c:set_thash_entries",
-      "filter": { "param": "thash_entries" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "thash_entries"
     },
     {
       "mechanism": "__setup",
       "locator": "net/ipv4/ipconfig.c:set_carrier_timeout",
-      "filter": { "param": "carrier_timeout" },
       "interface": "cmdline",
-      "path_prefix": "kernel cmdline"
+      "path_prefix": "kernel cmdline",
+      "param": "carrier_timeout"
     }
   ]
 }
