@@ -536,6 +536,81 @@
       "kernel_name": "llc_imb_pct",
       "category": "tunable",
       "summary": "LLC 不均衡阈值百分比(默认20)。LLC 间负载差超 imb_pct% 才触发 cache-aware 迁移;值大→容忍不均衡(少迁移),值小→更激进均衡。"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "设置或获取进程的 CPU 亲和性掩码,或以给定亲和启动命令",
+      "tool": "taskset"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "控制进程或共享内存的 NUMA 策略(调度与内存放置)",
+      "tool": "numactl"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "设置或获取进程的实时调度属性(策略+优先级),或以给定属性启动命令",
+      "tool": "chrt"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "改变运行中进程的调度优先级(nice 值)",
+      "tool": "renice"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "以调整后的 niceness 启动命令(影响调度优先级)",
+      "tool": "nice"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "打印当前进程可用的处理单元数(可能小于在线处理器数,受亲和/cpuset 限制)",
+      "tool": "nproc"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "从 sysfs、/proc/cpuinfo 与架构相关库(如 ppc 的 librtas)收集 CPU 架构信息:CPU 数、线程/核/socket、NUMA 节点、cache 与 cache 共享、家族/型号/bogoMIPS、字节序等",
+      "tool": "lscpu"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "在临时 .scope 或 .service 单元中运行命令;通过 --property= 设 cgroup 资源控制属性(CPUQuota=/CPUWeight=/AllowedCPUs=/Nice=/CPUAffinity= 等),是现代推荐方式替代 cgcreate/cgset/cgexec",
+      "tool": "systemd-run"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "显示系统拓扑(NUMA/Package/Core/PU/Cache/PCI 层级)",
+      "tool": "lstopo"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "lstopo 的纯文本构建变体",
+      "tool": "hwloc-ls"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "管理 Linux cpuset(cpuset v1 接口)",
+      "tool": "cset"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "创建新 cgroup",
+      "tool": "cgcreate"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "设置已存在 cgroup 的参数(写控制文件)",
+      "tool": "cgset"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "在指定 cgroup 里跑命令",
+      "tool": "cgexec"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "列所有 cgroup 或指定 cgroup 的子组",
+      "tool": "lscgroup"
     }
   ]
 }

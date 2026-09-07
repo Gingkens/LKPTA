@@ -66,6 +66,46 @@
       "kernel_name": "irqhandler_duration_check_setup",
       "category": "tunable",
       "summary": "boot cmdline 参数 irqhandler.duration_warn_us=<us>：设 IRQ handler 执行时长告警阈值，超限 pr_warn_ratelimited 通报长中断。"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "列出所有 PCI 设备(BDF 地址、vendor/device、class、kernel driver、NUMA 节点)",
+      "tool": "lspci"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "从 sysfs、/proc/cpuinfo 与架构相关库(如 ppc 的 librtas)收集 CPU 架构信息:CPU 数、threads/cores/sockets、NUMA 节点、cache 与 cache 共享、family/model/bogoMIPS、字节序等",
+      "tool": "lscpu"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "控制进程或共享内存的 NUMA 策略(调度与内存放置)",
+      "tool": "numactl"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "显示系统拓扑(NUMA/Package/Core/PU/Cache/PCI 层级)",
+      "tool": "lstopo"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "lstopo 的纯文本构建变体",
+      "tool": "hwloc-ls"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "周期性执行命令并显示输出(默认每 2 秒,占第一屏)",
+      "tool": "watch"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "直接 echo 写 per-irq 中断亲和性位掩码(CPU 掩码 hex 格式)到 /proc/irq/<irqN>/smp_affinity,请求把该中断绑到指定 CPU 集合",
+      "tool": "/proc/irq/<irqN>/smp_affinity 写操作(裸文件操作,非工具)"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "直接 echo 写 per-irq 中断亲和性 CPU 列表(cpulist 格式)到 /proc/irq/<irqN>/smp_affinity_list,与 smp_affinity 同物异格式,语义完全一致,仅格式不同",
+      "tool": "/proc/irq/<irqN>/smp_affinity_list 写操作(裸文件操作,非工具)"
     }
   ]
 }
