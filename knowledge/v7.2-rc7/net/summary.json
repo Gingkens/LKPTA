@@ -72,5 +72,17 @@
     { "kernel_name": "set_uhash_entries", "category": "tunable", "summary": "boot cmdline 参数 uhash_entries=：覆盖 UDP 哈希表槽位数（缺省按内存自动决定）。" },
     { "kernel_name": "set_thash_entries", "category": "tunable", "summary": "boot cmdline 参数 thash_entries=：覆盖 TCP 哈希表槽位数（缺省按内存自动决定）。" },
     { "kernel_name": "set_carrier_timeout", "category": "tunable", "summary": "boot cmdline 参数 carrier_timeout=：网卡载波检测等待超时（秒，默认 120），用于 ipconfig 等待链路 up。" }
+,
+    {"tool": "ip", "category": "userspace_tool", "summary": "iproute2 主命令,显示/操纵路由、网络设备、接口、tunnels"},
+    {"tool": "ethtool", "category": "userspace_tool", "summary": "查询/控制网卡驱动与硬件设置"},
+    {"tool": "ss", "category": "userspace_tool", "summary": "socket 统计工具,netstat 的现代替代"},
+    {"tool": "netstat", "category": "userspace_tool", "summary": "旧版网络统计:socket 连接、路由表、接口统计、masquerade、multicast"},
+    {"tool": "nstat", "category": "userspace_tool", "summary": "nstat 与 rtacct 共享 man page(rtacct.8)"},
+    {"tool": "tc", "category": "userspace_tool", "summary": "Traffic Control 配置:qdisc(排队规则)/class(类别)/filter(分类器)/chain(链)"},
+    {"tool": "lnstat", "category": "userspace_tool", "summary": "统一 Linux 网络统计工具,rtstat 的现代替代"},
+    {"tool": "sar", "category": "userspace_tool", "summary": "sysstat 包,收集/报告/保存系统活动信息"},
+    {"tool": "sysctl", "category": "userspace_tool", "summary": "运行时读/写内核参数(/proc/sys/ 下)"},
+    {"tool": "systemd-run", "category": "userspace_tool", "summary": "在临时 .scope/.service/.path/.socket/.timer 单元中跑命令,通过 --property= 设 cgroup 资源控制属性"},
+    {"tool": "ip netns", "category": "userspace_tool", "summary": "ip netns 子命令是 ip(8) 的 netns 操作入口,但因 net playbook 多 cap(netns-and-runtime-misc/boot-cmdline-sizing 等)涉及 netns 单独列条"}
   ]
 }

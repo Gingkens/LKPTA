@@ -46,6 +46,56 @@
       "kernel_name": "setup_bdev_allow_write_mounted",
       "category": "tunable",
       "summary": "boot cmdline 开关 bdev_allow_write_mounted=：是否允许对已挂载的块设备进行写打开（默认=CONFIG_BLK_DEV_WRITE_MOUNTED，默认 y）。"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "报告 CPU 利用率与每个块设备/分区的 IO 统计(sysstat 包)",
+      "tool": "iostat"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "设置或获取进程的 IO 调度类与优先级(util-linux)",
+      "tool": "ionice"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "从命令行调用块设备 ioctl(util-linux)",
+      "tool": "blockdev"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "列出块设备及拓扑(util-linux)",
+      "tool": "lsblk"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "复制文件并按操作数转换/格式化(GNU coreutils)",
+      "tool": "dd"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "在临时 .scope 或 .service 单元中运行命令;通过 --property= 设 cgroup 资源控制属性,是 cgroup v2 unified 上设 IO 限额的推荐入口(替代 libcgroup)",
+      "tool": "systemd-run"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "创建新 cgroup(libcgroup)",
+      "tool": "cgcreate"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "设置已存在 cgroup 的参数(写控制文件)",
+      "tool": "cgset"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "在指定 cgroup 里跑命令",
+      "tool": "cgexec"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "列所有 cgroup 或指定 cgroup 的子组",
+      "tool": "lscgroup"
     }
   ]
 }

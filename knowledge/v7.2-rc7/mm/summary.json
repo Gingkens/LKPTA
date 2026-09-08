@@ -486,6 +486,71 @@
       "kernel_name": "setup_thp_shmem",
       "category": "tunable",
       "summary": "cmdline thp_shmem=<order>[:always|advise|inherit|within_size|never];按 page size 精细配置 shmem THP 各 order 的策略位图。"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "显示系统已用/空闲物理内存与 swap 摘要(及内核 buffers/cache)",
+      "tool": "free"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "报告虚拟内存统计(processes/memory/paging/block IO/traps/disks/cpu)",
+      "tool": "vmstat"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "收集/报告/保存系统活动信息(累计计数器,基于 count/interval 采样)",
+      "tool": "sar"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "实时显示内核 slab 缓存信息(按排序准则列 top 缓存,含统计头)",
+      "tool": "slabtop"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "显示 per-NUMA-node 内存统计(系统级 hit/miss 或 per-process 跨 node 分配)",
+      "tool": "numastat"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "启用设备/文件作 swap paging 区域",
+      "tool": "swapon"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "禁用指定设备/文件的 swap",
+      "tool": "swapoff"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "运行时读写内核参数(/proc/sys/ 下)",
+      "tool": "sysctl"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "在临时 .scope 或 .service 单元中跑命令;通过 --property= 设 cgroup v2 内存资源控制(MemoryMin=/MemoryLow=/MemoryHigh=/MemoryMax=/MemorySwapMax=/MemoryZSwapMax=/MemoryZSwapWriteback=/OOMScoreAdjust=/OOMPolicy=/AllowedMemoryNodes= 等)",
+      "tool": "systemd-run"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "创建新 cgroup",
+      "tool": "cgcreate"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "设置已存在 cgroup 的参数(写控制文件)",
+      "tool": "cgset"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "在指定 cgroup 里跑命令",
+      "tool": "cgexec"
+    },
+    {
+      "category": "userspace_tool",
+      "summary": "列所有 cgroup 或指定 cgroup 的子组",
+      "tool": "lscgroup"
     }
   ]
 }
